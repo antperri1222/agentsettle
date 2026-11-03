@@ -21,14 +21,27 @@
 11. Detect anomalous purchasing loops, sybil behavior, self-trading, and artificial transaction volume.
 12. Audit all smart contracts independently, fuzz and invariant test, examine upgrade/admin keys, and obtain legal/compliance review.
 
-## Known prototype limitations
-- The simulator's public HTTP calls are intentionally unauthenticated. It is local-only and fictional.
-- `MockUSDC` can be minted by anyone and must NEVER be represented as real USDC.
-- The Solidity contract has not been deployed, compiled, audited, or fuzzed in the delivery environment.
-- Arbitrator can choose either payout or refund; compromised arbitrator could misdirect disputed funds.
-- The smart contract does not enforce purchasing budgets; it assumes the buyer wallet did so BEFORE creating the escrow.
-- No appeal, safe arbiter rotation, inactivity recovery from Delivered, partial settlement, gas abstraction or validator staking exists.
-- No formal verification, security review, or vulnerability disclosure process.
+## Status of controls (Phase 1, 2026-11-03)
+Implemented and tested (`npm run test:all`):
+- **On-chain access control**: only the provider delivers; only the buyer, or the buyer's delegated agent, approves or reclaims; only the arbiter resolves. Tested for strangers, swapped roles and fuzzed callers.
+- **No double settlement**: terminal states are final. This is invariant-tested: each job settles at most once, the escrow balance equals the sum of open jobs, and total value is conserved.
+- **Reentrancy**: `nonReentrant` plus checks-effects-interactions. Tested with a hostile token that re-enters `approve`, `providerRefund` and `resolve`.
+- **Asset mismatch**: the escrow rejects fee-on-transfer tokens. The SDK refuses to connect unless the chain ID and the escrow's `usdc()` match the verified registry, and the deploy script checks decimals and symbol on-chain.
+- **Wallet-enforced spend policy**: owner → agent SpendPolicy with per-job cap, daily cap, provider allowlist, expiry and revocation, enforced in `createJobAsAgent`. Refunds do not restore daily budget. The SDK only approves exact token amounts.
+- **Idempotency / replay**: a per-buyer `clientRef` blocks a second funding of the same request, and the SDK returns the existing job on retry. Transaction replay is covered by account nonces and EIP-155 chain IDs.
+- **Party separation**: the arbiter cannot be buyer, provider or agent. The provider cannot be the buyer or agent.
+- **Server holds no keys**: dashboard chain mode is read-only, and state comes from indexed events reconciled against storage.
+
+## Known limitations (open)
+- **Single immutable arbiter**: it can pay or refund any disputed job, and there is no rotation or appeal. A compromised arbiter can misdirect disputed funds.
+- **Indefinite lock from Delivered**: if the buyer never approves and nobody disputes, funds stay locked. The provider can always dispute, so this depends on arbiter liveness.
+- **USDC blocklist**: if Circle blocklists the provider, `_pay` reverts and the job is stuck in Delivered/Disputed until the arbiter refunds. If the buyer is blocklisted, refunds revert. A pull-payment design would isolate this.
+- **Delegated agent can approve** jobs it created. Exposure is bounded by the policy caps, but a compromised agent could approve a colluding provider on the allowlist. Owners should keep allowlists tight and dispute from the owner key.
+- **Daily cap uses UTC day buckets** (`block.timestamp / 1 days`), so up to 2× the daily cap can be spent across a midnight boundary.
+- **Indexer** is in-memory and treats N confirmations as final. A reorg deeper than N would not be repaired, and there is no persistent store yet.
+- **Simulation mode** remains unauthenticated by design. Its `actorId` values authorize nothing on-chain.
+- `MockUSDC` can be minted by anyone and exists only for local Anvil.
+- Not audited, and no formal verification or disclosure process yet.
 
 ## Before actual funds
 - Require authenticated wallet custody/policy and a threat-model review by an experienced security engineer.

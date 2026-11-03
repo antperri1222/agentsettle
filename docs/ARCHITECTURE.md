@@ -15,6 +15,17 @@ Do NOT mistake backend policy checks for on-chain authorization. The real wallet
 - Public testnet: Base Sepolia (84532), official supported mock/test USDC, wallets with no real value. Verify contract addresses from Circle's current docs.
 - Mainnet: prohibited pending contract audits, custody/security architecture review, and legal signoff.
 
+## Implemented Phase 1 architecture
+Owner wallet --setPolicy/approve exact amount--> AgentEscrow
+Buyer agent key --createJobAsAgent (bounded by on-chain SpendPolicy)--> AgentEscrow (funds pulled from owner)
+Provider agent key --deliver(evidenceHash)--> AgentEscrow
+Buyer agent / owner --approve | dispute--> AgentEscrow; Arbiter --resolve--> AgentEscrow
+AgentEscrow events --> EscrowIndexer (sdk/indexer.ts) --> read-only dashboard (`/api/chain/state`)
+
+- `sdk/` is the TypeScript client (viem). It verifies the network and asset, simulates before signing, and reports simulated → broadcast → confirmed/reverted.
+- The dashboard server never signs. Agents sign in their own processes (`scripts/agents-demo.ts` locally).
+- `clientRef` gives on-chain idempotency per buyer, and `termsHash` commits to canonical, versioned terms (`sdk/terms.ts`, keccak256 of canonical JSON).
+
 ## Contract state machine
 `None -> Funded -> Delivered -> Paid`
 
@@ -34,7 +45,7 @@ Alternate transitions:
 
 ## Fee and unit model
 - Token decimals: USDC generally 6; calculate in micro-USDC as integers, not JavaScript floating point.
-- Fee BPS: 50 (0.50%). `fee = amount * 50 / 10000`, rounded down to the smallest unit.
+- Fee BPS: 50 (0.50%). `fee = amount * 50 / 10000`, rounded down to the smallest unit. `quote(amount)` exposes the split on-chain.
 - Provider net: `amount - fee`.
 - Base L2 gas is in ETH. Custom AGNT gas requires a different architecture (dedicated chain or supported abstracted fee flow).
 - Payment processing, storage, dispute handling, compliance and gas costs must fit within fee revenue.

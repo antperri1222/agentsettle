@@ -4,7 +4,7 @@
 
 AgentSettle is an experimental foundation for autonomous agents that commission work, hold funds in escrow, submit a hash of a deliverable, and release payment only after buyer approval or arbitration. A production product may add wallet-enforced spending policies, stablecoin payments, agent reputation, x402, and trusted validators.
 
-> **SAFETY:** The dashboard is a fully local **SIMULATOR**. It does not transfer, lock, mint, or custody any actual cryptocurrency. Its agent roles are mock IDs and are NOT authenticated. The Solidity example is a **draft, unaudited** research contract. **Do not deploy to mainnet, use real funds, or market this as a finished financial system.**
+> **SAFETY:** The dashboard's **Simulation** mode is fully local and fictional: no real tokens, and its agent roles are unauthenticated mock IDs. Its **On-chain** mode is read-only and only connects to local Anvil or Base Sepolia (testnet); it never holds keys. The Solidity contract is **unaudited** and has only been run on local Anvil. **Do not deploy to mainnet, use real funds, or market this as a finished financial system.**
 
 ## Quick start (no installs beyond Node.js 20+)
 
@@ -31,7 +31,12 @@ The service binds only to `127.0.0.1` and stores state in memory. Restarting the
 - `demo/`: dependency-free Node.js web server, in-memory escrow simulator, browser dashboard, and automated tests.
 - `contracts/src/AgentEscrow.sol`: proposed EVM smart contract using OpenZeppelin SafeERC20 and ReentrancyGuard.
 - `contracts/src/MockUSDC.sol`: **test-only** six-decimal token with unrestricted minting.
-- `contracts/test/AgentEscrow.t.sol`: draft Foundry tests.
+- `contracts/test/`: Foundry unit, adversarial, fuzz, invariant and deploy-guard tests.
+- `contracts/script/DeployBaseSepolia.s.sol`: guarded testnet deploy script (refuses any chain but 84532).
+- `sdk/`: TypeScript client, network registry, terms hashing, event indexer, local Anvil helpers.
+- `scripts/`: `chain-up.ts`, `agents-demo.ts`, artifact generator, dependency installer.
+- `test/`: SDK unit tests and Anvil end-to-end tests.
+- `docs/RUNBOOK.md`: test commands, local demo, Base Sepolia procedure, gas measurements.
 - `docs/PRD.md`: product requirements, launch scope, acceptance criteria.
 - `docs/ARCHITECTURE.md`: technical and economic architecture.
 - `docs/THREAT_MODEL.md`: trust assumptions, abuse cases, and security gates.
@@ -39,16 +44,27 @@ The service binds only to `127.0.0.1` and stores state in memory. Restarting the
 - `docs/TOKEN_STRATEGY.md`: prudent future-token approach.
 - `CLAUDE.md`: copy/paste starter context for Claude Code.
 
-## Solidity testing (requires internet and a local Foundry installation)
+## Phase 1: contracts, local chain and SDK (Node ≥ 22.18 + Foundry)
 
 ```bash
-cd contracts
-forge install OpenZeppelin/openzeppelin-contracts@v5.6.1 --no-commit
-forge install foundry-rs/forge-std --no-commit
-forge test -vv
+npm install
+npm run setup:contracts     # pinned OpenZeppelin v5.6.1 + forge-std v1.17.0
+npm run test:all            # typecheck + simulator/SDK unit + Foundry + Anvil end-to-end
 ```
 
-**These Solidity tests have not been compiled or executed in the delivery environment**, because Foundry and its dependencies were not installed there. Claude Code should install dependencies, compile, fix incompatibilities, expand tests, and run security tooling before anything reaches a public testnet. Update dependencies to their current reviewed versions where necessary.
+Watch real signed agent-to-agent transactions on a local chain:
+
+```bash
+npm run chain:up            # terminal 1: Anvil + MockUSDC (TEST ONLY) + AgentEscrow
+npm run dev                 # terminal 2: dashboard → "On-chain" tab
+npm run agents:demo         # terminal 3: owner policy, buyer/provider/arbiter agents sign txs
+```
+
+The dashboard has two clearly separated modes:
+- **Simulation (in-memory)**: the original demo, unchanged. Nothing is on-chain.
+- **On-chain**: read-only state rebuilt from contract events, shown as included → confirmed → settled, with signer, gas and explorer links. The server holds no keys.
+
+What's in place: hardened `AgentEscrow` (on-chain spend policies for agent keys, per-buyer idempotency, party separation, deadline ceiling), 52 Foundry tests including fuzz and invariants, a TypeScript client in `sdk/`, an event indexer, and a guarded Base Sepolia deploy script. **Base Sepolia is not deployed.** That needs explicit authorization; see [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## How to use with Claude Code
 

@@ -8,17 +8,17 @@
 - [ ] A real cryptographic signature, blockchain deployment, persistent indexer or wallet policy **is not included**.
 
 ## Phase 1 — real Base Sepolia end-to-end (next)
-- [ ] Install Foundry/OpenZeppelin, compile and run Solidity tests.
-- [ ] Add property-based/fuzz tests: conservation of funds, terminal-state finality, caller authorization.
-- [ ] Deploy mock token and escrow to Anvil/local chain; automate happy path with two test wallets.
-- [ ] Deploy to Base Sepolia with test-only funds; verify published contracts and correct token/network.
-- [ ] Replace mock buyer/provider IDs with wallet signatures and robust chain-state reads.
-- [ ] Add event indexer that tolerates reorgs and retries.
-- [ ] Make UI show actual testnet tx confirmations and explorer links distinctly from pending state.
+- [x] Install Foundry/OpenZeppelin, compile and run Solidity tests.
+- [x] Add property-based/fuzz tests: conservation of funds, terminal-state finality, caller authorization.
+- [x] Deploy mock token and escrow to Anvil/local chain; automate happy path with two test wallets.
+- [ ] Deploy to Base Sepolia with test-only funds; verify published contracts and correct token/network. *(script + guards ready; awaiting explicit authorization — docs/RUNBOOK.md)*
+- [x] Replace mock buyer/provider IDs with wallet signatures and robust chain-state reads (chain mode; simulation mode unchanged).
+- [~] Add event indexer that tolerates reorgs and retries. *(in-memory, shallow-reorg safe; persistence pending)*
+- [x] Make UI show actual testnet tx confirmations and explorer links distinctly from pending state.
 
 ## Phase 2 — developer-friendly agent SDK
 - [ ] TypeScript SDK to create, deliver, approve, dispute and refund jobs.
-- [ ] Signed policies enforced by a smart account or wallet provider, not merely in the Node API.
+- [~] Signed policies enforced by a smart account or wallet provider, not merely in the Node API. *(enforced in escrow via SpendPolicy; smart-account option still open)*
 - [ ] Machine-readable receipts, idempotency, terms hashing and versioning.
 - [ ] Provider agent test harness, webhook callbacks, MCP adapter where useful.
 - [ ] Optional x402 for metered services; clarify where escrow is necessary vs direct pay.

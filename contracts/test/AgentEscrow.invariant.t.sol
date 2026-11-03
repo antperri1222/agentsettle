@@ -105,25 +105,21 @@ contract EscrowHandler is Test {
             try escrow.approve(id) {
                 ok = true;
                 pay = true;
-            }
-                catch {}
+            } catch {}
         } else if (kind == 1) {
             try escrow.resolve(id, pay) {
                 ok = true;
-            }
-                catch {}
+            } catch {}
         } else if (kind == 2) {
             try escrow.refundExpired(id) {
                 ok = true;
                 pay = false;
-            }
-                catch {}
+            } catch {}
         } else {
             try escrow.providerRefund(id) {
                 ok = true;
                 pay = false;
-            }
-                catch {}
+            } catch {}
         }
         if (!ok) return;
         settledCount[id]++;
