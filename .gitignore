@@ -7,3 +7,4 @@ contracts/cache/
 coverage/
 .idea/
 .vscode/
+.agentsettle/
