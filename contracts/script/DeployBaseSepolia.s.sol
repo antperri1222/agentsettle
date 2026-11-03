@@ -35,7 +35,7 @@ contract DeployBaseSepolia is Script {
         vm.stopBroadcast();
 
         console.log("AgentEscrow deployed (Base Sepolia TESTNET):", address(escrow));
-        console.log("Deploy block:", block.number);
+        console.log("Deploy block: read it from broadcast/DeployBaseSepolia.s.sol/84532/run-latest.json (see RUNBOOK)");
         console.log("Explorer: https://sepolia.basescan.org/address/%s", address(escrow));
     }
 

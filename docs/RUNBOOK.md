@@ -57,28 +57,48 @@ Do not run this until the project owner has explicitly approved a testnet deploy
 - Chain ID 84532, explorer https://sepolia.basescan.org, from https://docs.base.org (verified 2026-11-03).
 - The public RPC `https://sepolia.base.org` is rate-limited. Use a provider RPC URL kept in `.env`, never committed.
 
-### 3.3 Dry run (no broadcast)
+### 3.3 Create `.env` in the project root (never commit it; it is gitignored)
 ```bash
+BASE_SEPOLIA_RPC_URL=https://base-sepolia.g.alchemy.com/v2/<your-key>
+DEPLOYER_ADDRESS=0x...
+TREASURY_ADDRESS=0x...
+ARBITER_ADDRESS=0x...
+OWNER_ADDRESS=0x...
+BUYER_AGENT_ADDRESS=0x...
+PROVIDER_AGENT_ADDRESS=0x...
+# filled in after deployment:
+# AGENTSETTLE_NETWORK=base-sepolia
+# ESCROW_ADDRESS=0x...
+# ESCROW_DEPLOY_BLOCK=...
+```
+
+### 3.4 Dry run (simulates against Base Sepolia, sends nothing)
+```bash
+set -a; source .env; set +a
 cd contracts
-export CONFIRM_TESTNET_DEPLOY=base-sepolia TREASURY_ADDRESS=0x... ARBITER_ADDRESS=0x...
-forge script script/DeployBaseSepolia.s.sol --rpc-url "$BASE_SEPOLIA_RPC_URL" --account agentsettle-deployer
+CONFIRM_TESTNET_DEPLOY=base-sepolia forge script script/DeployBaseSepolia.s.sol \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" --account agentsettle-deployer --sender "$DEPLOYER_ADDRESS"
 ```
 The script refuses unless: chain = 84532; the verified USDC address has code, 6 decimals and symbol `USDC`; treasury ≠ arbiter; arbiter ≠ deployer; fee ≤ 10%.
 
-### 3.4 Broadcast and verify
+### 3.5 Broadcast (only after explicit go-ahead)
+Run the same command with `--broadcast` appended. Then read the real address and block from the receipt:
 ```bash
-forge script script/DeployBaseSepolia.s.sol --rpc-url "$BASE_SEPOLIA_RPC_URL" --account agentsettle-deployer --broadcast --verify
+python3 -c "import json;d=json.load(open('broadcast/DeployBaseSepolia.s.sol/84532/run-latest.json'));r=d['receipts'][0];print('ESCROW_ADDRESS='+r['contractAddress']);print('ESCROW_DEPLOY_BLOCK='+str(int(r['blockNumber'],16)))"
 ```
-Record the escrow address and deploy block in `.env` as `ESCROW_ADDRESS` and `ESCROW_DEPLOY_BLOCK`.
+Add both lines and `AGENTSETTLE_NETWORK=base-sepolia` to `.env`. (Source verification on BaseScan is optional: append `--verify` with an `ETHERSCAN_API_KEY`.)
 
-### 3.5 Point the dashboard at it (read-only)
+### 3.6 Run the milestone and watch it
 ```bash
-AGENTSETTLE_NETWORK=base-sepolia ESCROW_ADDRESS=0x... ESCROW_DEPLOY_BLOCK=... \
-OWNER_ADDRESS=0x... BUYER_AGENT_ADDRESS=0x... PROVIDER_AGENT_ADDRESS=0x... npm run dev
+npm run agents:sepolia            # preflight: balances + config, sends nothing
+npm run agents:sepolia -- --run   # executes; asks each keystore password
+npm run dev                       # dashboard → On-chain shows Base Sepolia with BaseScan links
 ```
-`AgentSettleClient.connect` refuses if the RPC chain ID ≠ 84532 or the escrow's `usdc()` is not the verified address.
+Each run writes a receipt log to `.agentsettle/sepolia-runs/`. `AgentSettleClient.connect` refuses if the RPC chain ID ≠ 84532 or the escrow's `usdc()` is not the verified address.
 
-### 3.6 Milestone acceptance (from CLAUDE.md)
+Rehearsed 2026-11-03 on a local chain impersonating Base Sepolia (chain 84532, stand-in USDC at the verified address, keystore signers, the real deploy script): all milestone checks passed.
+
+### 3.7 Milestone acceptance (from CLAUDE.md)
 - [ ] Two distinct agent wallets create a test-USDC escrow, deliver a hash, and release and refund.
 - [ ] Unauthorized signers are rejected (Forbidden), and a second settlement is rejected (InvalidState).
 - [ ] The dashboard shows included → confirmed (3 blocks) → settled, with gas per tx and explorer links.

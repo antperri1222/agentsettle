@@ -49,7 +49,7 @@ export interface IndexedJob {
 
 interface RawLog { eventName: string; args: any; blockNumber: bigint; txHash: Hex; logIndex: number }
 
-const CHUNK = 2_000n;
+const CHUNK = 500n; // conservative: some free RPC tiers cap eth_getLogs ranges
 
 export class EscrowIndexer {
   private committed: RawLog[] = [];

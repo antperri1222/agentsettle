@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const LOCAL_FILE = fileURLToPath(new URL('../.agentsettle/local.json', import.meta.url));
-const POLL_MS = 1500;
+const POLL_MS = process.env.AGENTSETTLE_NETWORK === 'base-sepolia' ? 4000 : 1500; // be gentle with hosted RPC quotas
 
 function resolveConfig(env = process.env) {
   const name = env.AGENTSETTLE_NETWORK || (existsSync(LOCAL_FILE) ? 'anvil' : '');

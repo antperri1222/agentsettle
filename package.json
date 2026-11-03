@@ -5,7 +5,7 @@
   "type": "module",
   "description": "AgentSettle local agent-to-agent escrow simulator and prototype Solidity contracts",
   "scripts": {
-    "dev": "node demo/server.mjs",
+    "dev": "node --env-file-if-exists=.env demo/server.mjs",
     "test": "node --test demo/test/*.test.mjs test/unit/*.test.ts",
     "test:contracts": "cd contracts && forge test",
     "test:e2e": "node --test test/e2e/*.test.ts",
@@ -14,7 +14,8 @@
     "build:contracts": "cd contracts && forge build && cd .. && node scripts/gen-artifacts.mjs",
     "setup:contracts": "sh scripts/install-contract-deps.sh",
     "chain:up": "node scripts/chain-up.ts",
-    "agents:demo": "node scripts/agents-demo.ts"
+    "agents:demo": "node scripts/agents-demo.ts",
+    "agents:sepolia": "node --env-file-if-exists=.env scripts/agents-sepolia.ts"
   },
   "engines": {
     "node": ">=22.18"
