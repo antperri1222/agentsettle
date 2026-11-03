@@ -1,0 +1,13 @@
+{
+  "name": "agentsettle-starter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AgentSettle local agent-to-agent escrow simulator and prototype Solidity contracts",
+  "scripts": {
+    "dev": "node demo/server.mjs",
+    "test": "node --test demo/test/*.test.mjs",
+    "test:contracts": "cd contracts && forge test -vv"
+  },
+  "engines": { "node": ">=20" }
+}
