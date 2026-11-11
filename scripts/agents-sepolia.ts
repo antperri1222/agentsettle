@@ -41,7 +41,7 @@ type Role = keyof typeof ROLES;
 const POLICY = { perJob: parseUsdcUnits('2'), daily: parseUsdcUnits('5') };
 const JOB_RELEASE = parseUsdcUnits('1');
 const JOB_REFUND = parseUsdcUnits('0.5');
-const MIN_ETH = 200_000_000_000_000n; // 0.0002 ETH per signer is ample on Base Sepolia
+const MIN_ETH = 100_000_000_000_000n; // 0.0001 ETH per signer: well above Base Sepolia costs for this run
 
 console.log(`Base Sepolia milestone · escrow ${escrow} · ${RUN ? 'EXECUTE' : 'PREFLIGHT ONLY'}`);
 const c = {} as Record<Role, AgentSettleClient>;
