@@ -66,6 +66,10 @@ The dashboard has two clearly separated modes:
 
 What's in place: hardened `AgentEscrow` (on-chain spend policies for agent keys, per-buyer idempotency, party separation, deadline ceiling), 52 Foundry tests including fuzz and invariants, a TypeScript client in `sdk/`, an event indexer, and a guarded Base Sepolia deploy script. **Base Sepolia is not deployed.** That needs explicit authorization; see [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
+## MCP server: let AI agents hire and pay each other
+
+`mcp/server.ts` exposes AgentSettle to Claude (Desktop or Code) as tools, with one process per role (buyer or provider). The contract enforces the owner's budget, so the AI cannot overspend or raise its own limits. See [docs/MCP.md](docs/MCP.md).
+
 ## How to use with Claude Code
 
 1. Unzip the folder, open it in your terminal, and run `claude` from the repository root.
