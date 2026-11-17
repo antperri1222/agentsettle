@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { decodeEventLog, getAddress, type Address, type Hex, type PublicClient } from 'viem';
 import { agentEscrowAbi } from './artifacts.ts';
 import { explorerTx, type NetworkConfig } from './networks.ts';
@@ -7,7 +9,8 @@ import type { JobStatus } from './client.ts';
 /**
  * Event-sourced view of the escrow. Ownership and job state are derived ONLY from chain logs, never from
  * request bodies. Logs deeper than `network.confirmations` are committed; shallower logs are re-fetched on every
- * poll so a shallow reorg replaces them. In-memory for now; a persistent store (Postgres) is the next step.
+ * poll so a shallow reorg replaces them. Committed logs can be checkpointed to a JSON file so restarts resume
+ * instead of rescanning; a proper database is the next step.
  */
 
 export type EventFinality = 'included' | 'confirmed';
@@ -48,39 +51,114 @@ export interface IndexedJob {
 }
 
 interface RawLog { eventName: string; args: any; blockNumber: bigint; txHash: Hex; logIndex: number }
+interface ReceiptInfo { from: Address; gasUsed: bigint; gasCostWei: bigint }
 
-const CHUNK = 500n; // conservative: some free RPC tiers cap eth_getLogs ranges
+export interface IndexerOptions {
+  /** Initial eth_getLogs block range. Steps down automatically (→100 →10) if the RPC refuses it. */
+  blockRange?: bigint;
+  /** Parallel eth_getLogs requests while catching up. */
+  concurrency?: number;
+  /** Max blocks scanned per poll(), so a long catch-up happens in visible, checkpointed steps. */
+  maxBlocksPerPoll?: bigint;
+  /** JSON file for persisting committed logs between restarts (optional). */
+  checkpointFile?: string;
+}
+
+export interface SyncStatus { syncing: boolean; startBlock: string; scannedThrough: string; head: string; percent: number; blockRange: string }
+
+const STEP_DOWN = [500n, 100n, 10n]; // Alchemy's free tier allows only 10-block eth_getLogs ranges
+
+const toJson = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? { $big: x.toString() } : x));
+const fromJson = (s: string) => JSON.parse(s, (_k, x) => (x && typeof x === 'object' && '$big' in x ? BigInt(x.$big) : x));
 
 export class EscrowIndexer {
   private committed: RawLog[] = [];
   private tentative: RawLog[] = [];
   private committedThrough: bigint;
-  private receipts = new Map<Hex, { from: Address; gasUsed: bigint; gasCostWei: bigint }>();
+  private readonly startBlock: bigint;
+  private receipts = new Map<Hex, ReceiptInfo>();
   head = 0n;
+  /** Number of eth_getLogs requests made (useful for tests and diagnostics). */
+  logRequests = 0;
+  private blockRange: bigint;
+  private readonly concurrency: number;
+  private readonly maxBlocksPerPoll: bigint;
+  private readonly checkpointFile?: string;
   private readonly publicClient: PublicClient;
   private readonly network: NetworkConfig;
   readonly escrow: Address;
 
-  constructor(publicClient: PublicClient, network: NetworkConfig, escrow: Address, fromBlock: bigint) {
+  constructor(publicClient: PublicClient, network: NetworkConfig, escrow: Address, fromBlock: bigint, opts: IndexerOptions = {}) {
     this.publicClient = publicClient;
     this.network = network;
     this.escrow = escrow;
+    this.startBlock = fromBlock;
     this.committedThrough = fromBlock - 1n;
+    this.blockRange = opts.blockRange ?? STEP_DOWN[0];
+    this.concurrency = Math.max(1, opts.concurrency ?? 4);
+    this.maxBlocksPerPoll = opts.maxBlocksPerPoll ?? 5_000n;
+    this.checkpointFile = opts.checkpointFile;
+    this.loadCheckpoint();
   }
 
-  private async fetch(from: bigint, to: bigint): Promise<RawLog[]> {
+  private loadCheckpoint() {
+    if (!this.checkpointFile || !existsSync(this.checkpointFile)) return;
+    try {
+      const c = fromJson(readFileSync(this.checkpointFile, 'utf8'));
+      // Only trust a checkpoint written for this exact chain + contract + start block.
+      if (c.chainId !== this.network.chainId || getAddress(c.escrow) !== getAddress(this.escrow) || c.startBlock !== this.startBlock) return;
+      this.committed = c.committed;
+      this.committedThrough = c.committedThrough;
+      this.blockRange = c.blockRange ?? this.blockRange;
+      for (const [h, r] of c.receipts) this.receipts.set(h, r);
+    } catch { /* corrupt checkpoint: rebuild from chain */ }
+  }
+
+  private saveCheckpoint() {
+    if (!this.checkpointFile) return;
+    mkdirSync(dirname(this.checkpointFile), { recursive: true });
+    const tmp = `${this.checkpointFile}.tmp`;
+    writeFileSync(tmp, toJson({
+      version: 1, chainId: this.network.chainId, escrow: this.escrow, startBlock: this.startBlock,
+      committedThrough: this.committedThrough, blockRange: this.blockRange, committed: this.committed,
+      receipts: [...this.receipts].filter(([h]) => this.committed.some((l) => l.txHash === h)),
+    }));
+    renameSync(tmp, this.checkpointFile); // atomic replace
+  }
+
+  private async getLogsRange(start: bigint, end: bigint): Promise<RawLog[]> {
+    this.logRequests++;
+    const logs = await this.publicClient.getLogs({ address: this.escrow, fromBlock: start, toBlock: end });
     const out: RawLog[] = [];
-    for (let start = from; start <= to; start += CHUNK) {
-      const end = start + CHUNK - 1n > to ? to : start + CHUNK - 1n;
-      const logs = await this.publicClient.getLogs({ address: this.escrow, fromBlock: start, toBlock: end });
-      for (const log of logs) {
-        try {
-          const ev = decodeEventLog({ abi: agentEscrowAbi, data: log.data, topics: log.topics });
-          out.push({ eventName: ev.eventName, args: ev.args, blockNumber: log.blockNumber!, txHash: log.transactionHash!, logIndex: log.logIndex! });
-        } catch { /* unknown event: ignore */ }
-      }
+    for (const log of logs) {
+      try {
+        const ev = decodeEventLog({ abi: agentEscrowAbi, data: log.data, topics: log.topics });
+        out.push({ eventName: ev.eventName, args: ev.args, blockNumber: log.blockNumber!, txHash: log.transactionHash!, logIndex: log.logIndex! });
+      } catch { /* unknown event: ignore */ }
     }
     return out;
+  }
+
+  /** Fetches [from, to] in chunks with bounded concurrency; steps the range down if the RPC refuses it. */
+  private async fetch(from: bigint, to: bigint): Promise<RawLog[]> {
+    for (;;) {
+      const chunks: [bigint, bigint][] = [];
+      for (let s = from; s <= to; s += this.blockRange) chunks.push([s, s + this.blockRange - 1n > to ? to : s + this.blockRange - 1n]);
+      const results: RawLog[][] = new Array(chunks.length);
+      let next = 0;
+      let failure: unknown = null;
+      const worker = async () => {
+        while (failure === null && next < chunks.length) {
+          const i = next++;
+          try { results[i] = await this.getLogsRange(chunks[i][0], chunks[i][1]); } catch (e) { failure ??= e; }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(this.concurrency, chunks.length) }, worker));
+      if (failure === null) return results.flat().sort((a, b) => (a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1));
+      const smaller = STEP_DOWN.find((r) => r < this.blockRange);
+      if (smaller === undefined) throw failure; // already at the smallest range: a real error
+      this.blockRange = smaller; // provider refused the range (e.g. Alchemy free tier): retry smaller
+    }
   }
 
   async poll(): Promise<void> {
@@ -89,12 +167,32 @@ export class EscrowIndexer {
     const safe = head - BigInt(this.network.confirmations - 1); // block with exactly `confirmations` confs
     const from = this.committedThrough + 1n;
     if (from > head) { this.tentative = []; return; }
-    const logs = await this.fetch(from, head);
-    const nowCommitted = logs.filter((l) => l.blockNumber <= safe);
-    this.tentative = logs.filter((l) => l.blockNumber > safe);
-    this.committed.push(...nowCommitted);
-    if (safe > this.committedThrough) this.committedThrough = safe;
+    const windowEnd = from + this.maxBlocksPerPoll - 1n;
+    const to = windowEnd < head ? windowEnd : head;
+    const logs = await this.fetch(from, to);
+    const commitTo = safe < to ? safe : to;
+    const nowCommitted = logs.filter((l) => l.blockNumber <= commitTo);
+    // Unconfirmed logs only exist near the head; while catching up there are none.
+    this.tentative = to === head ? logs.filter((l) => l.blockNumber > commitTo) : [];
     await Promise.all([...nowCommitted, ...this.tentative].map((l) => this.receipt(l.txHash)));
+    this.committed.push(...nowCommitted);
+    if (commitTo > this.committedThrough) this.committedThrough = commitTo;
+    this.saveCheckpoint();
+  }
+
+  /** Polls repeatedly until caught up with the head (useful for scripts and tests). */
+  async sync(maxPolls = 1_000): Promise<void> {
+    for (let i = 0; i < maxPolls; i++) { await this.poll(); if (!this.status().syncing) return; }
+  }
+
+  status(): SyncStatus {
+    const total = this.head - this.startBlock + 1n;
+    const done = this.committedThrough - this.startBlock + 1n;
+    const behind = this.head - this.committedThrough > BigInt(this.network.confirmations);
+    return {
+      syncing: behind, startBlock: String(this.startBlock), scannedThrough: String(this.committedThrough), head: String(this.head),
+      percent: total > 0n ? Math.min(100, Number((done * 100n) / total)) : 100, blockRange: String(this.blockRange),
+    };
   }
 
   private async receipt(hash: Hex) {

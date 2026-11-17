@@ -69,7 +69,11 @@
     }
     status.className = 'status ' + (data.mode === 'TESTNET' ? 'testnet' : 'chain');
     status.textContent = data.mode === 'TESTNET' ? '● BASE SEPOLIA TESTNET · NO REAL FUNDS' : '● LOCAL ANVIL · TEST TOKEN';
-    $('chainOff').hidden = !data.stale; if (data.stale) $('chainOff').textContent = 'Showing last known state; RPC error: ' + data.error;
+    const notices = [];
+    if (data.sync?.syncing) notices.push(`Catching up on contract history: ${data.sync.percent}% (block ${data.sync.scannedThrough} of ${data.sync.head}). Jobs below may be incomplete until this reaches 100%.`);
+    if (data.stale) notices.push('Showing last known state; RPC error: ' + data.error);
+    $('chainOff').hidden = notices.length === 0;
+    $('chainOff').textContent = notices.join(' ');
     $('chainOn').hidden = false;
     $('chainEyebrow').textContent = data.network.label;
     $('chainBadge').textContent = `chain ${data.network.chainId} · ${data.network.confirmations} conf threshold`;

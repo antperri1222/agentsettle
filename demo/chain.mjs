@@ -45,10 +45,16 @@ export async function createChainView(env = process.env) {
   let lastPoll = 0;
   let snapshot = null;
 
+  let inFlight = null;
+  let lastLogged = null;
+
   async function ensure() {
     if (client) return;
     client = await AgentSettleClient.connect({ network, publicClient, escrowAddress: cfg.escrow, expectedTokenAddress: cfg.token ?? undefined });
-    indexer = new EscrowIndexer(publicClient, network, client.escrow, cfg.deployBlock);
+    const checkpointFile = fileURLToPath(new URL(`../.agentsettle/index-${network.name}-${client.escrow.toLowerCase()}.json`, import.meta.url));
+    // Gentle defaults for hosted free tiers (Alchemy free allows 10-block eth_getLogs ranges; the indexer adapts).
+    const concurrency = Number(process.env.INDEXER_CONCURRENCY || 2);
+    indexer = new EscrowIndexer(publicClient, network, client.escrow, cfg.deployBlock, { checkpointFile, concurrency, maxBlocksPerPoll: 2_000n });
   }
 
   async function refresh() {
@@ -86,19 +92,37 @@ export async function createChainView(env = process.env) {
       network: { name: network.name, label: network.label, chainId: network.chainId, confirmations: network.confirmations, explorerUrl: network.explorerUrl },
       escrow: client.escrow, escrowUrl: explorerAddress(network, client.escrow),
       token: client.token, tokenUrl: explorerAddress(network, client.token),
-      head: String(indexer.head), roleLabels, balances, policy, jobs,
+      head: String(indexer.head), roleLabels, balances, policy, jobs, sync: indexer.status(),
       polledAt: new Date().toISOString(),
     };
     lastError = null;
   }
 
+  function kick() {
+    // Refresh in the background so a long history catch-up never blocks the HTTP response.
+    const syncing = indexer?.status().syncing;
+    if (inFlight || (!syncing && Date.now() - lastPoll < POLL_MS)) return;
+    lastPoll = Date.now();
+    inFlight = refresh()
+      .catch((e) => {
+        lastError = e instanceof Error ? (e.shortMessage ?? e.message.split('\n')[0]) : String(e);
+        const full = e instanceof Error ? e.message : String(e);
+        // Full detail to the server terminal (RPC URLs redacted), once per distinct error.
+        if (full !== lastLogged) { lastLogged = full; console.error('[chain view]', full.replace(/(\/v2\/|\/v3\/)[^\s/"]+/g, '$1<redacted>')); }
+      })
+      .finally(() => { inFlight = null; });
+  }
+
   return {
     async state() {
-      if (Date.now() - lastPoll > POLL_MS) {
-        lastPoll = Date.now();
-        try { await refresh(); } catch (e) { lastError = e instanceof Error ? e.message.split('\n')[0] : String(e); }
+      kick();
+      if (!snapshot) {
+        if (indexer) {
+          const s = indexer.status();
+          if (s.syncing) return { enabled: false, reason: `Indexing contract history: ${s.percent}% (block ${s.scannedThrough} of ${s.head}, ${s.blockRange}-block requests)…` };
+        }
+        return { enabled: false, reason: lastError ? `Chain not reachable: ${lastError}` : 'Connecting to chain…' };
       }
-      if (!snapshot) return { enabled: false, reason: `Chain not reachable: ${lastError ?? 'starting'}` };
       return { ...snapshot, stale: Boolean(lastError), error: lastError };
     },
   };

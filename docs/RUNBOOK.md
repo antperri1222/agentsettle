@@ -94,7 +94,9 @@ npm run agents:sepolia            # preflight: balances + config, sends nothing
 npm run agents:sepolia -- --run   # executes; asks each keystore password
 npm run dev                       # dashboard → On-chain shows Base Sepolia with BaseScan links
 ```
-Each run writes a receipt log to `.agentsettle/sepolia-runs/`. `AgentSettleClient.connect` refuses if the RPC chain ID ≠ 84532 or the escrow's `usdc()` is not the verified address.
+Each run writes a receipt log to `.agentsettle/sepolia-runs/`.
+
+**Dashboard indexing on a free RPC tier.** Alchemy's free tier only allows `eth_getLogs` over 10 blocks per request (viem reports the refusal as "JSON is not a valid request object"). The indexer detects this and steps down to 10-block requests automatically, catches up in windows with a progress banner, and checkpoints to `.agentsettle/index-*.json` so restarts only scan the gap since the last run. Base Sepolia makes ~43k blocks/day, so a dashboard left off for days will take a while to catch up; `INDEXER_CONCURRENCY` (default 2) trades speed against rate limits. A paid RPC tier or a hosted indexer removes the limit. `AgentSettleClient.connect` refuses if the RPC chain ID ≠ 84532 or the escrow's `usdc()` is not the verified address.
 
 Rehearsed 2026-11-03 on a local chain impersonating Base Sepolia (chain 84532, stand-in USDC at the verified address, keystore signers, the real deploy script): all milestone checks passed.
 
