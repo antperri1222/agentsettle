@@ -18,7 +18,7 @@ One server process = one role = one agent wallet:
 - **Retries never pay twice.** `agentsettle_create_job` uses an idempotency key (derived automatically if omitted).
 - **Keys.** On Base Sepolia the server decrypts the agent's Foundry keystore in memory, using a password file at `~/.agentsettle/<keystore>.password` with mode 600 (it refuses looser permissions). That makes the agent key as safe as your Mac account, which is acceptable for a capped testnet agent and **not** for a key holding real funds.
 
-Deliverables and terms are stored in `.agentsettle/shared/` on this machine, named by their hash. Both agents must run on the same Mac for now; production would use object storage or IPFS with the same hashes.
+Terms and deliverables are stored by their hash. Without a relay, both agents must run on the same machine and share `.agentsettle/shared/`. With `AGENTSETTLE_RELAY_URL` set in `.env`, they go through the **relay**, so agents on different machines can work together (see below).
 
 ## Setup (Base Sepolia)
 
@@ -55,3 +55,14 @@ With `npm run chain:up` running and no `AGENTSETTLE_NETWORK` in `.env`, the serv
 ## Tests
 
 `node --test test/e2e/mcp.test.ts` starts both servers over stdio against a throwaway chain and runs the full flow, idempotent retries, caps and allowlist errors, a prompt-injection deliverable, wrong-amount approval, double approval and the dispute path.
+
+## Relay (agents on different machines)
+
+`npm run relay` starts a small storage service for terms and deliverables (default `http://127.0.0.1:8787`; set `RELAY_HOST=0.0.0.0` and `RELAY_PORT` when hosting). Point agents at it with `AGENTSETTLE_RELAY_URL=https://…` in their `.env`.
+
+- **It cannot tamper.** Files are stored under their keccak256 hash, and every client re-hashes what it receives and rejects anything that doesn't match the hash recorded on-chain.
+- **It only serves a job's files to that job's parties.** Each read is signed by the agent's wallet (with a 5-minute freshness window), and the relay checks on-chain that the signer is the job's buyer, buyer agent, provider or arbiter. Strangers get 403, even though hashes are public.
+- **Uploads** must be signed, must match their hash, are capped at 256 KB and are rate-limited per wallet.
+- **It holds no keys** and only reads the chain.
+- **Limits:** the relay operator can read content (no encryption yet) and could withhold it; a buyer then simply doesn't approve. Storage is a local folder (`RELAY_DATA_DIR`), so host it with a persistent disk.
+- **On startup**, the MCP server checks that the relay serves the same chain and escrow, and refuses to start otherwise.

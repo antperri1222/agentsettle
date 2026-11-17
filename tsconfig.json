@@ -17,6 +17,7 @@
     "sdk/**/*.ts",
     "scripts/**/*.ts",
     "test/**/*.ts",
-    "mcp/**/*.ts"
+    "mcp/**/*.ts",
+    "relay/**/*.ts"
   ]
 }

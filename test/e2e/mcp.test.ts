@@ -13,6 +13,8 @@ import { decryptKeystoreJson, loadKeystoreWithPasswordFile } from '../../sdk/key
 import { deployLocal, devWallet, localPublicClient, startAnvil, type LocalDeployment } from '../../sdk/local.ts';
 import { NETWORKS } from '../../sdk/networks.ts';
 import { parseUsdcUnits } from '../../sdk/terms.ts';
+import { createRelay } from '../../relay/server.ts';
+import type { Server } from 'node:http';
 
 /**
  * Drives two real AgentSettle MCP servers (buyer + provider) over stdio, exactly as an MCP client like Claude would,
@@ -25,7 +27,7 @@ let tmp: string;
 let buyer: Client;
 let provider: Client;
 
-async function connect(role: 'buyer' | 'provider'): Promise<Client> {
+async function connect(role: 'buyer' | 'provider', extra: Record<string, string> = {}): Promise<Client> {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SERVER],
@@ -33,6 +35,7 @@ async function connect(role: 'buyer' | 'provider'): Promise<Client> {
       ...(process.env as Record<string, string>),
       AGENTSETTLE_ROLE: role, AGENTSETTLE_NETWORK: 'anvil',
       AGENTSETTLE_LOCAL_FILE: join(tmp, 'local.json'), AGENTSETTLE_DATA_DIR: join(tmp, 'shared'),
+      ...extra,
     },
     stderr: 'ignore',
   });
@@ -180,4 +183,34 @@ test('keystore + password-file loading (Base Sepolia path) matches cast and refu
   chmodSync(pw, 0o600);
   assert.equal(loadKeystoreWithPasswordFile(join(dir, 'k'), pw).address, d.roles.buyerAgent);
   assert.throws(() => decryptKeystoreJson(JSON.stringify({ version: 3, crypto: { cipher: 'aes-128-ctr' } }), 'x'));
+});
+
+test('agents on "different machines" (separate storage) complete a job through the relay', async () => {
+  const relayServer: Server = createRelay({ network: 'anvil', rpcUrl: d.rpcUrl, escrow: d.escrow, dataDir: join(tmp, 'relay') });
+  await new Promise<void>((r) => relayServer.listen(0, '127.0.0.1', r));
+  const a = relayServer.address();
+  const url = `http://127.0.0.1:${typeof a === 'object' && a ? a.port : 0}`;
+  const b2 = await connect('buyer', { AGENTSETTLE_RELAY_URL: url, AGENTSETTLE_DATA_DIR: join(tmp, 'machine-a') });
+  const p2 = await connect('provider', { AGENTSETTLE_RELAY_URL: url, AGENTSETTLE_DATA_DIR: join(tmp, 'machine-b') });
+  try {
+    // Fresh day budget is exhausted by earlier tests, so raise it (owner action, outside the agents).
+    const owner = await AgentSettleClient.connect({ network: NETWORKS.anvil, publicClient: localPublicClient(d.rpcUrl), escrowAddress: d.escrow, expectedTokenAddress: d.token, wallet: await devWallet('owner', d.rpcUrl) });
+    const now = (await localPublicClient(d.rpcUrl).getBlock()).timestamp;
+    await owner.setPolicy(d.roles.buyerAgent, parseUsdcUnits('2'), parseUsdcUnits('20'), now + 86_400n);
+    await owner.approveSpend(parseUsdcUnits('2'));
+
+    const created = await call(b2, 'agentsettle_create_job', { provider: d.roles.providerAgent, amount_usdc: '1', description: 'Cross-machine job via relay', acceptance_criteria: ['Says hello'], idempotency_key: 'relay-job-00001' });
+    assert.equal(created.isError, false, JSON.stringify(created.data));
+    const id = Number(created.data.job_id);
+    const seen = await call(p2, 'agentsettle_get_job', { job_id: id });
+    assert.equal(seen.data.terms.description, 'Cross-machine job via relay');
+    assert.equal(seen.data.terms_verified_against_chain, true);
+    assert.equal((await call(p2, 'agentsettle_deliver', { job_id: id, content: 'hello from machine B' })).isError, false);
+    const review = await call(b2, 'agentsettle_review_delivery', { job_id: id });
+    assert.equal(review.data.deliverable, 'hello from machine B');
+    assert.equal(review.data.deliverable_verified_against_chain, true);
+    assert.equal((await call(b2, 'agentsettle_approve_payment', { job_id: id, confirm_amount_usdc: '1' })).isError, false);
+  } finally {
+    await b2.close(); await p2.close(); relayServer.close();
+  }
 });
