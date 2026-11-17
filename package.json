@@ -18,7 +18,8 @@
     "agents:sepolia": "node --env-file-if-exists=.env scripts/agents-sepolia.ts",
     "mcp": "node mcp/server.ts",
     "mcp:setup": "node --env-file-if-exists=.env scripts/mcp-setup.ts",
-    "owner": "node --env-file-if-exists=.env scripts/owner.ts"
+    "owner": "node --env-file-if-exists=.env scripts/owner.ts",
+    "mcp:install-desktop": "node --env-file-if-exists=.env scripts/install-claude-desktop.mjs"
   },
   "engines": {
     "node": ">=22.18"
