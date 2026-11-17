@@ -42,13 +42,20 @@ if (typeof config !== 'object' || config === null || Array.isArray(config)) {
   console.error('✗ Unexpected config format; nothing was changed.');
   process.exit(1);
 }
+// Prefer a stable Node path: Homebrew's versioned Cellar path disappears on the next `brew upgrade node`.
+let nodePath = process.execPath;
+if (nodePath.includes('/Cellar/')) {
+  const stable = ['/opt/homebrew/bin/node', '/usr/local/bin/node'].find((p) => existsSync(p));
+  if (stable) nodePath = stable;
+}
+
 config.mcpServers ??= {};
 for (const role of ['buyer', 'provider']) {
-  config.mcpServers[`agentsettle-${role}`] = { command: process.execPath, args: [serverPath], env: { AGENTSETTLE_ROLE: role } };
+  config.mcpServers[`agentsettle-${role}`] = { command: nodePath, args: [serverPath], env: { AGENTSETTLE_ROLE: role } };
 }
 writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 console.log(`✓ Added agentsettle-buyer and agentsettle-provider to:\n  ${configPath}`);
-console.log(`  (node: ${process.execPath})`);
+console.log(`  (node: ${nodePath})`);
 
 if ((process.env.AGENTSETTLE_NETWORK || '') === 'base-sepolia') {
   for (const role of ['buyer', 'provider']) {
