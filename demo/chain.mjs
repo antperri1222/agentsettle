@@ -19,7 +19,7 @@ function resolveConfig(env = process.env) {
       return { enabled: false, reason: 'Base Sepolia selected but ESCROW_ADDRESS / ESCROW_DEPLOY_BLOCK are not set. No contract is deployed yet.' };
     }
     const roles = {};
-    for (const [k, v] of Object.entries({ owner: env.OWNER_ADDRESS, buyerAgent: env.BUYER_AGENT_ADDRESS, providerAgent: env.PROVIDER_AGENT_ADDRESS })) if (v) roles[k] = v;
+    for (const [k, v] of Object.entries({ owner: env.OWNER_ADDRESS, buyerAgent: env.BUYER_AGENT_ADDRESS, providerAgent: env.PROVIDER_AGENT_ADDRESS, arbiter: env.ARBITER_ADDRESS, treasury: env.TREASURY_ADDRESS })) if (v) roles[k] = v;
     return { enabled: true, name, rpcUrl: env.BASE_SEPOLIA_RPC_URL || null, escrow: env.ESCROW_ADDRESS, token: null, deployBlock: BigInt(env.ESCROW_DEPLOY_BLOCK), roles };
   }
   return { enabled: false, reason: `Unsupported network "${name}". Only anvil and base-sepolia are allowed.` };

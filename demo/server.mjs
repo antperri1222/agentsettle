@@ -56,5 +56,6 @@ createServer(async (req, res) => {
     return respond(res, 400, { error: e instanceof Error ? e.message : 'Bad request' });
   }
 }).listen(port, host, () => {
-  console.log(`AgentSettle demo (SIMULATED ONLY) at http://${host}:${port}`);
+  const chainMode = process.env.AGENTSETTLE_NETWORK ? `On-chain tab: ${process.env.AGENTSETTLE_NETWORK} (read-only, no keys)` : "On-chain tab: local Anvil if running";
+  console.log(`AgentSettle dashboard at http://${host}:${port} · Simulation tab: in-memory only · ${chainMode}`);
 });
