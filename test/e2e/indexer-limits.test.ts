@@ -23,7 +23,8 @@ let d: LocalDeployment;
 let rpcUrl: string;
 let proxyUrl: string;
 let tmp: string;
-const counts = { getLogs: 0, refused: 0 };
+const counts = { getLogs: 0, refused: 0, rateLimited: 0 };
+let inject429 = false;
 
 before(async () => {
   ({ proc: anvil, rpcUrl } = await startAnvil(20_000 + Math.floor(Math.random() * 20_000)));
@@ -50,6 +51,11 @@ before(async () => {
     const msg = JSON.parse(body);
     if (msg.method === 'eth_getLogs') {
       counts.getLogs++;
+      if (inject429 && counts.getLogs % 3 === 0) {
+        counts.rateLimited++;
+        res.writeHead(429, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: 429, message: 'Your app has exceeded its compute units per second capacity.' } }));
+      }
       const { fromBlock, toBlock } = msg.params[0];
       if (BigInt(toBlock) - BigInt(fromBlock) + 1n > 10n) {
         counts.refused++;
@@ -100,4 +106,32 @@ test('indexer steps down to 10-block ranges, catches up in windows, and matches 
   const other = new EscrowIndexer(limitedClient(), NETWORKS.anvil, d.token, BigInt(d.deployBlock), { checkpointFile: file, maxBlocksPerPoll: 1_000n });
   await other.poll();
   assert.equal(other.jobs().length, 0);
+});
+
+test('indexer absorbs rate limiting (HTTP 429) with backoff instead of failing or shrinking ranges wrongly', async () => {
+  const direct = new EscrowIndexer(localPublicClient(rpcUrl), NETWORKS.anvil, d.escrow, BigInt(d.deployBlock));
+  await direct.sync();
+  inject429 = true;
+  try {
+    const idx = new EscrowIndexer(limitedClient(), NETWORKS.anvil, d.escrow, BigInt(d.deployBlock), {
+      blockRange: 10n, maxBlocksPerPoll: 60n, requestsPerSecond: 200, backoffMs: 5,
+    });
+    await idx.sync();
+    assert.ok(idx.rateLimitHits > 0, 'the proxy should have rate-limited some requests');
+    assert.equal(idx.status().syncing, false);
+    assert.equal(idx.status().blockRange, '10');
+    assert.deepEqual(idx.jobs().map((j) => [j.id, j.status, j.events.length]), direct.jobs().map((j) => [j.id, j.status, j.events.length]));
+    assert.deepEqual(await idx.reconcile(), []);
+  } finally { inject429 = false; }
+});
+
+test('pacing spaces requests to the configured rate', async () => {
+  const idx = new EscrowIndexer(localPublicClient(rpcUrl), NETWORKS.anvil, d.escrow, BigInt(d.deployBlock), {
+    blockRange: 10n, maxBlocksPerPoll: 100n, requestsPerSecond: 50, concurrency: 4,
+  });
+  const t0 = Date.now();
+  await idx.poll();
+  const elapsed = Date.now() - t0;
+  // >= (requests - 1) * 20ms regardless of concurrency
+  assert.ok(elapsed >= (idx.logRequests - 1) * 20 - 5, `elapsed ${elapsed}ms for ${idx.logRequests} requests`);
 });

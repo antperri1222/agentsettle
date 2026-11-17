@@ -53,14 +53,25 @@ export async function createChainView(env = process.env) {
     client = await AgentSettleClient.connect({ network, publicClient, escrowAddress: cfg.escrow, expectedTokenAddress: cfg.token ?? undefined });
     const checkpointFile = fileURLToPath(new URL(`../.agentsettle/index-${network.name}-${client.escrow.toLowerCase()}.json`, import.meta.url));
     // Gentle defaults for hosted free tiers (Alchemy free allows 10-block eth_getLogs ranges; the indexer adapts).
+    const hosted = network.name !== 'anvil';
     const concurrency = Number(process.env.INDEXER_CONCURRENCY || 2);
-    indexer = new EscrowIndexer(publicClient, network, client.escrow, cfg.deployBlock, { checkpointFile, concurrency, maxBlocksPerPoll: 2_000n });
+    // Alchemy's free tier rate-limits by compute units per second; ~5 eth_getLogs/s stays under it.
+    const requestsPerSecond = Number(process.env.INDEXER_RPS || (hosted ? 5 : 0));
+    indexer = new EscrowIndexer(publicClient, network, client.escrow, cfg.deployBlock, {
+      checkpointFile, concurrency, requestsPerSecond, maxBlocksPerPoll: hosted ? 500n : 5_000n, // small windows = frequent checkpoints
+    });
   }
 
   async function refresh() {
     await ensure();
     await indexer.poll();
     const jobs = indexer.jobs();
+    if (snapshot && indexer.status().syncing) {
+      // While catching up, skip the balance/policy reads to save RPC quota; they refresh once synced.
+      snapshot = { ...snapshot, jobs, head: String(indexer.head), sync: indexer.status(), polledAt: new Date().toISOString() };
+      lastError = null;
+      return;
+    }
     const roleLabels = Object.fromEntries(Object.entries(cfg.roles).map(([k, v]) => [v.toLowerCase(), k]));
     const balances = {};
     for (const [role, addr] of Object.entries(cfg.roles)) {
@@ -106,10 +117,16 @@ export async function createChainView(env = process.env) {
     inFlight = refresh()
       .catch((e) => {
         lastError = e instanceof Error ? (e.shortMessage ?? e.message.split('\n')[0]) : String(e);
-        const full = e instanceof Error ? e.message : String(e);
-        // Full detail to the server terminal (RPC URLs redacted), once per distinct error.
-        if (full !== lastLogged) { lastLogged = full; console.error('[chain view]', full.replace(/(\/v2\/|\/v3\/)[^\s/"]+/g, '$1<redacted>')); }
+        // Full detail to the server terminal (RPC URLs redacted), once per kind of error, not once per block range.
+        const kind = `${lastError}|${e?.status ?? ''}`;
+        if (kind !== lastLogged) {
+          lastLogged = kind;
+          const full = e instanceof Error ? e.message : String(e);
+          console.error('[chain view]', full.replace(/(\/v2\/|\/v3\/)[^\s/"]+/g, '$1<redacted>'));
+          console.error('[chain view] (further identical errors are suppressed; the dashboard keeps retrying)');
+        }
       })
+      .then(() => { if (lastLogged && !lastError) { console.error('[chain view] recovered'); lastLogged = null; } })
       .finally(() => { inFlight = null; });
   }
 

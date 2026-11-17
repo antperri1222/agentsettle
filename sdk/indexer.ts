@@ -62,7 +62,25 @@ export interface IndexerOptions {
   maxBlocksPerPoll?: bigint;
   /** JSON file for persisting committed logs between restarts (optional). */
   checkpointFile?: string;
+  /** Pace eth_getLogs to at most this many requests per second (hosted free tiers rate-limit). Unlimited if omitted. */
+  requestsPerSecond?: number;
+  /** Retries per request when the RPC says it is rate-limited (HTTP 429), with exponential backoff. */
+  rateLimitRetries?: number;
+  /** Base backoff delay in ms for rate-limit retries (doubles each attempt). */
+  backoffMs?: number;
 }
+
+/** True when an RPC error means "slow down" rather than "this request is invalid". */
+export function isRateLimited(e: unknown): boolean {
+  for (let cur: any = e; cur; cur = cur.cause) {
+    if (cur.status === 429 || cur.code === 429) return true;
+    const text = `${cur.shortMessage ?? ''} ${cur.details ?? ''} ${cur.message ?? ''}`;
+    if (/\b429\b|exceeded its compute units|rate limit|too many requests/i.test(text)) return true;
+  }
+  return false;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export interface SyncStatus { syncing: boolean; startBlock: string; scannedThrough: string; head: string; percent: number; blockRange: string }
 
@@ -84,6 +102,12 @@ export class EscrowIndexer {
   private readonly concurrency: number;
   private readonly maxBlocksPerPoll: bigint;
   private readonly checkpointFile?: string;
+  private readonly minIntervalMs: number;
+  private readonly rateLimitRetries: number;
+  private readonly backoffMs: number;
+  private nextSlot = 0;
+  /** Number of rate-limit (429) responses absorbed by backoff. */
+  rateLimitHits = 0;
   private readonly publicClient: PublicClient;
   private readonly network: NetworkConfig;
   readonly escrow: Address;
@@ -98,7 +122,19 @@ export class EscrowIndexer {
     this.concurrency = Math.max(1, opts.concurrency ?? 4);
     this.maxBlocksPerPoll = opts.maxBlocksPerPoll ?? 5_000n;
     this.checkpointFile = opts.checkpointFile;
+    this.minIntervalMs = opts.requestsPerSecond && opts.requestsPerSecond > 0 ? 1000 / opts.requestsPerSecond : 0;
+    this.rateLimitRetries = opts.rateLimitRetries ?? 6;
+    this.backoffMs = opts.backoffMs ?? 500;
     this.loadCheckpoint();
+  }
+
+  /** Waits for this request's turn so starts are spaced at least minIntervalMs apart across all workers. */
+  private async pace() {
+    if (!this.minIntervalMs) return;
+    const now = Date.now();
+    const slot = Math.max(now, this.nextSlot);
+    this.nextSlot = slot + this.minIntervalMs;
+    if (slot > now) await sleep(slot - now);
   }
 
   private loadCheckpoint() {
@@ -127,8 +163,22 @@ export class EscrowIndexer {
   }
 
   private async getLogsRange(start: bigint, end: bigint): Promise<RawLog[]> {
-    this.logRequests++;
-    const logs = await this.publicClient.getLogs({ address: this.escrow, fromBlock: start, toBlock: end });
+    let logs;
+    for (let attempt = 0; ; attempt++) {
+      await this.pace();
+      this.logRequests++;
+      try {
+        logs = await this.publicClient.getLogs({ address: this.escrow, fromBlock: start, toBlock: end });
+        break;
+      } catch (e) {
+        if (!isRateLimited(e) || attempt >= this.rateLimitRetries) throw e;
+        this.rateLimitHits++;
+        // Back off this request and push every worker's next slot out too, so the whole indexer slows down.
+        const wait = this.backoffMs * 2 ** attempt;
+        this.nextSlot = Math.max(this.nextSlot, Date.now() + wait);
+        await sleep(wait);
+      }
+    }
     const out: RawLog[] = [];
     for (const log of logs) {
       try {
@@ -155,6 +205,7 @@ export class EscrowIndexer {
       };
       await Promise.all(Array.from({ length: Math.min(this.concurrency, chunks.length) }, worker));
       if (failure === null) return results.flat().sort((a, b) => (a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1));
+      if (isRateLimited(failure)) throw failure; // persistent rate limiting is not a range problem
       const smaller = STEP_DOWN.find((r) => r < this.blockRange);
       if (smaller === undefined) throw failure; // already at the smallest range: a real error
       this.blockRange = smaller; // provider refused the range (e.g. Alchemy free tier): retry smaller
@@ -198,7 +249,18 @@ export class EscrowIndexer {
   private async receipt(hash: Hex) {
     const cached = this.receipts.get(hash);
     if (cached) return cached;
-    const r = await this.publicClient.getTransactionReceipt({ hash });
+    let r;
+    for (let attempt = 0; ; attempt++) {
+      await this.pace();
+      try { r = await this.publicClient.getTransactionReceipt({ hash }); break; }
+      catch (e) {
+        if (!isRateLimited(e) || attempt >= this.rateLimitRetries) throw e;
+        this.rateLimitHits++;
+        const wait = this.backoffMs * 2 ** attempt;
+        this.nextSlot = Math.max(this.nextSlot, Date.now() + wait);
+        await sleep(wait);
+      }
+    }
     const v = { from: getAddress(r.from), gasUsed: r.gasUsed, gasCostWei: r.gasUsed * r.effectiveGasPrice };
     this.receipts.set(hash, v);
     return v;
