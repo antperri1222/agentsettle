@@ -12,6 +12,8 @@ import { NETWORKS } from '../../sdk/networks.ts';
 import { RelayClient, RelayError, uploadMessage } from '../../sdk/relay.ts';
 import { canonicalTerms, hashEvidence, hashTerms, parseUsdcUnits, type TaskTermsV1 } from '../../sdk/terms.ts';
 import { createRelay } from '../../relay/server.ts';
+import { createChainView } from '../../demo/chain.mjs';
+import { NETWORKS as NETS, confirmationsFor } from '../../sdk/networks.ts';
 
 let anvil: ChildProcess;
 let relay: Server;
@@ -80,4 +82,49 @@ test('uploads are validated: hash must match body, signature fresh and valid, si
   assert.equal((await put(hash, body, ts, '0x1234')).status, 401, 'garbage signature');
   assert.equal((await put(hash, body, ts, sig)).status, 200);
   await assert.rejects(rc('stranger').put('x'.repeat(256 * 1024 + 1)), (e: unknown) => e instanceof RelayError && e.status === 413);
+});
+
+test('relay serves a shared event index; the dashboard reads jobs from it instead of scanning the chain', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agentsettle-relay-idx-'));
+  const idxRelay = createRelay({ network: 'anvil', rpcUrl: d.rpcUrl, escrow: d.escrow, dataDir: dir, index: { deployBlock: BigInt(d.deployBlock), pollMs: 100 } });
+  await new Promise<void>((r) => idxRelay.listen(0, '127.0.0.1', r));
+  const a = idxRelay.address();
+  const url = `http://127.0.0.1:${typeof a === 'object' && a ? a.port : 0}`;
+  try {
+    let idx: any;
+    for (let i = 0; i < 100; i++) {
+      idx = await (await fetch(`${url}/v1/index`)).json();
+      if (idx.jobs?.length && !idx.sync.syncing) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const job = idx.jobs.find((j: any) => BigInt(j.id) === jobId);
+    assert.ok(job, 'job indexed');
+    assert.equal(job.status, 'Delivered'); // delivered by the earlier test
+    assert.equal(idx.chainId, 31337);
+    const health = await (await fetch(`${url}/health`)).json();
+    assert.equal(health.indexing.syncing, false);
+
+    // Dashboard pointed at the relay: jobs come from the relay index, not a local scan.
+    const localFile = join(dir, 'local.json');
+    writeFileSync(localFile, JSON.stringify(d));
+    const view = await createChainView({ AGENTSETTLE_NETWORK: 'anvil', AGENTSETTLE_LOCAL_FILE: localFile, AGENTSETTLE_RELAY_URL: url } as any);
+    let st: any;
+    for (let i = 0; i < 50; i++) {
+      st = await view.state();
+      if (st.enabled) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.equal(st.enabled, true, JSON.stringify(st));
+    assert.match(st.indexSource, /^relay/);
+    assert.equal(st.jobs.find((j: any) => BigInt(j.id) === jobId)?.status, 'Delivered');
+  } finally {
+    idxRelay.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('confirmation threshold is time-based: ~5 s of 200 ms Base blocks', () => {
+  assert.equal(confirmationsFor(5, 200), 25);
+  assert.equal(NETS['base-sepolia'].confirmations, 25);
+  assert.equal(confirmationsFor(0.1, 1000), 1);
 });

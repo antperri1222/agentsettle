@@ -14,6 +14,7 @@ import { baseSepolia } from 'viem/chains';
 import { agentEscrowAbi } from '../sdk/artifacts.ts';
 import { localChain } from '../sdk/local.ts';
 import { getNetwork } from '../sdk/networks.ts';
+import { EscrowIndexer } from '../sdk/indexer.ts';
 import { MAX_BLOB_BYTES, SIGNATURE_WINDOW_SECONDS, readMessage, recoverSigner, uploadMessage, type BlobKind } from '../sdk/relay.ts';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,6 +29,11 @@ export interface RelayOptions {
   dataDir: string;
   /** Uploads allowed per signer per minute. */
   uploadsPerMinute?: number;
+  /**
+   * Run the shared event indexer (served at GET /v1/index) so dashboards don't each rescan chain history.
+   * Base makes ~5 blocks/s; use an RPC that allows wide eth_getLogs ranges (the indexer steps down if refused).
+   */
+  index?: { deployBlock: bigint; rpcUrl?: string; requestsPerSecond?: number; pollMs?: number };
 }
 
 export function createRelay(opts: RelayOptions) {
@@ -40,6 +46,41 @@ export function createRelay(opts: RelayOptions) {
   const perMinute = opts.uploadsPerMinute ?? 30;
   const uploads = new Map<string, number[]>();
   let arbiter: Address | null = null;
+
+  // ── shared event indexer ──
+  let indexer: EscrowIndexer | null = null;
+  let indexError: string | null = null;
+  let indexUpdatedAt: string | null = null;
+  let stopped = false;
+  if (opts.index) {
+    const idxRpc = opts.index.rpcUrl ?? opts.rpcUrl;
+    const idxClient = createPublicClient({ chain, transport: http(idxRpc) }) as PublicClient;
+    indexer = new EscrowIndexer(idxClient, network, escrow, opts.index.deployBlock, {
+      checkpointFile: join(opts.dataDir, `index-${network.name}-${escrow.toLowerCase()}.json`),
+      requestsPerSecond: opts.index.requestsPerSecond, concurrency: 2, maxBlocksPerPoll: 2_000n,
+    });
+    const pollMs = opts.index.pollMs ?? 3000;
+    let lastLoggedPct = -1;
+    (async function loop() {
+      while (!stopped) {
+        try {
+          await indexer!.poll();
+          indexUpdatedAt = new Date().toISOString();
+          if (indexError) log('indexer recovered');
+          indexError = null;
+          const st = indexer!.status();
+          if (st.syncing && st.percent !== lastLoggedPct && st.percent % 5 === 0) { lastLoggedPct = st.percent; log(`indexing history ${st.percent}% (block ${st.scannedThrough} of ${st.head}, ${st.blockRange}-block requests)`); }
+          if (!st.syncing && lastLoggedPct !== 100) { lastLoggedPct = 100; log(`index caught up at block ${st.head}`); }
+          if (st.syncing) continue; // catch up as fast as pacing allows
+        } catch (e) {
+          const msg = (e as { shortMessage?: string }).shortMessage ?? (e as Error).message.split('\n')[0];
+          if (msg !== indexError) logError('indexer error (will retry):', msg);
+          indexError = msg;
+        }
+        await new Promise((r) => setTimeout(r, pollMs));
+      }
+    })();
+  }
 
   const send = (res: ServerResponse, status: number, body: unknown, type = 'application/json') => {
     res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
@@ -77,7 +118,16 @@ export function createRelay(opts: RelayOptions) {
     try {
       const url = new URL(req.url ?? '/', 'http://relay');
       if (req.method === 'GET' && url.pathname === '/health') {
-        return send(res, 200, { ok: true, network: network.name, chainId: network.chainId, escrow });
+        return send(res, 200, { ok: true, network: network.name, chainId: network.chainId, escrow, indexing: indexer ? indexer.status() : null });
+      }
+
+      // Public: everything here is derived from public chain events (no terms or deliverables).
+      if (req.method === 'GET' && url.pathname === '/v1/index') {
+        if (!indexer) return send(res, 404, { error: 'Indexing is not enabled on this relay (set ESCROW_DEPLOY_BLOCK)' });
+        return send(res, 200, {
+          network: network.name, chainId: network.chainId, escrow, confirmations: network.confirmations,
+          head: String(indexer.head), sync: indexer.status(), updatedAt: indexUpdatedAt, error: indexError, jobs: indexer.jobs(),
+        });
       }
 
       const put = url.pathname.match(/^\/v1\/blobs\/(0x[0-9a-fA-F]{64})$/);
@@ -120,6 +170,7 @@ export function createRelay(opts: RelayOptions) {
       return send(res, status, { error: status === 500 ? 'Internal error' : (e as Error).message });
     }
   });
+  server.on('close', () => { stopped = true; });
   return server;
 }
 
@@ -138,6 +189,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
     const d = JSON.parse(readFileSync(localFile, 'utf8'));
     rpcUrl = d.rpcUrl; escrow = d.escrow;
+    process.env.ESCROW_DEPLOY_BLOCK ??= String(d.deployBlock);
   } else {
     rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || getNetwork(name).defaultRpcUrl;
     if (!process.env.ESCROW_ADDRESS) { logError('ESCROW_ADDRESS is not set'); process.exit(1); }
@@ -147,7 +199,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const port = Number(process.env.RELAY_PORT || process.env.PORT || 8787);
   const host = process.env.RELAY_HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
   const dataDir = process.env.RELAY_DATA_DIR || join(REPO, '.agentsettle', 'relay');
-  createRelay({ network: name, rpcUrl, escrow: escrow as Address, dataDir }).listen(port, host, () => {
-    log(`listening on http://${host}:${port} · ${getNetwork(name).label} · escrow ${escrow} · data ${dataDir}`);
+  const deployBlock = process.env.ESCROW_DEPLOY_BLOCK;
+  const index = deployBlock && /^\d+$/.test(deployBlock)
+    ? { deployBlock: BigInt(deployBlock), rpcUrl: process.env.INDEXER_RPC_URL || undefined, requestsPerSecond: Number(process.env.INDEXER_RPS || (name === 'anvil' ? 0 : 5)) }
+    : undefined;
+  if (!index) log('indexing disabled: set ESCROW_DEPLOY_BLOCK to serve /v1/index');
+  createRelay({ network: name, rpcUrl, escrow: escrow as Address, dataDir, index }).listen(port, host, () => {
+    log(`listening on http://${host}:${port} · ${getNetwork(name).label} · escrow ${escrow} · data ${dataDir}${index ? ` · indexing from block ${index.deployBlock}${index.rpcUrl ? ' via INDEXER_RPC_URL' : ''}` : ''}`);
   });
 }

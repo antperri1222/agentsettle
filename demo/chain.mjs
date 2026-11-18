@@ -3,10 +3,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const LOCAL_FILE = fileURLToPath(new URL('../.agentsettle/local.json', import.meta.url));
+const DEFAULT_LOCAL_FILE = fileURLToPath(new URL('../.agentsettle/local.json', import.meta.url));
 const POLL_MS = process.env.AGENTSETTLE_NETWORK === 'base-sepolia' ? 4000 : 1500; // be gentle with hosted RPC quotas
 
 function resolveConfig(env = process.env) {
+  const LOCAL_FILE = env.AGENTSETTLE_LOCAL_FILE || DEFAULT_LOCAL_FILE;
   const name = env.AGENTSETTLE_NETWORK || (existsSync(LOCAL_FILE) ? 'anvil' : '');
   if (!name) return { enabled: false, reason: 'No chain configured. Run `npm run chain:up` (local Anvil) or set AGENTSETTLE_NETWORK.' };
   if (name === 'anvil') {
@@ -29,7 +30,7 @@ export async function createChainView(env = process.env) {
   const cfg = resolveConfig(env);
   if (!cfg.enabled) return { state: async () => ({ enabled: false, reason: cfg.reason }) };
 
-  const { createPublicClient, http } = await import('viem');
+  const { createPublicClient, http, getAddress } = await import('viem');
   const { getNetwork, explorerAddress } = await import('../sdk/networks.ts');
   const { AgentSettleClient } = await import('../sdk/client.ts');
   const { EscrowIndexer } = await import('../sdk/indexer.ts');
@@ -47,10 +48,14 @@ export async function createChainView(env = process.env) {
 
   let inFlight = null;
   let lastLogged = null;
+  let syncing = false;
+  // With a relay configured, read the relay's shared index instead of scanning chain history here.
+  const relayUrl = (env.AGENTSETTLE_RELAY_URL || '').replace(/\/+$/, '') || null;
 
   async function ensure() {
     if (client) return;
     client = await AgentSettleClient.connect({ network, publicClient, escrowAddress: cfg.escrow, expectedTokenAddress: cfg.token ?? undefined });
+    if (relayUrl) return;
     const checkpointFile = fileURLToPath(new URL(`../.agentsettle/index-${network.name}-${client.escrow.toLowerCase()}.json`, import.meta.url));
     // Gentle defaults for hosted free tiers (Alchemy free allows 10-block eth_getLogs ranges; the indexer adapts).
     const hosted = network.name !== 'anvil';
@@ -62,14 +67,27 @@ export async function createChainView(env = process.env) {
     });
   }
 
+  async function loadIndex() {
+    if (relayUrl) {
+      const r = await fetch(`${relayUrl}/v1/index`);
+      if (!r.ok) throw new Error(`Relay index unavailable (${r.status}): ${(await r.text()).slice(0, 200)}`);
+      const d = await r.json();
+      if (d.chainId !== network.chainId || getAddress(d.escrow) !== client.escrow) throw new Error(`Relay indexes chain ${d.chainId} / ${d.escrow}, not this deployment`);
+      return { jobs: d.jobs, head: d.head, sync: d.sync, source: `relay (${relayUrl})`, sourceError: d.error };
+    }
+    await indexer.poll();
+    return { jobs: indexer.jobs(), head: String(indexer.head), sync: indexer.status(), source: 'this dashboard (local scan)', sourceError: null };
+  }
+
   async function refresh() {
     await ensure();
-    await indexer.poll();
-    const jobs = indexer.jobs();
-    if (snapshot && indexer.status().syncing) {
+    const idx = await loadIndex();
+    const jobs = idx.jobs;
+    syncing = idx.sync.syncing;
+    if (snapshot && syncing) {
       // While catching up, skip the balance/policy reads to save RPC quota; they refresh once synced.
-      snapshot = { ...snapshot, jobs, head: String(indexer.head), sync: indexer.status(), polledAt: new Date().toISOString() };
-      lastError = null;
+      snapshot = { ...snapshot, jobs, head: idx.head, sync: idx.sync, indexSource: idx.source, polledAt: new Date().toISOString() };
+      lastError = idx.sourceError ? `index: ${idx.sourceError}` : null;
       return;
     }
     const roleLabels = Object.fromEntries(Object.entries(cfg.roles).map(([k, v]) => [v.toLowerCase(), k]));
@@ -100,19 +118,20 @@ export async function createChainView(env = process.env) {
     snapshot = {
       enabled: true,
       mode: network.name === 'anvil' ? 'LOCAL_CHAIN' : 'TESTNET',
-      network: { name: network.name, label: network.label, chainId: network.chainId, confirmations: network.confirmations, explorerUrl: network.explorerUrl },
+      network: { name: network.name, label: network.label, chainId: network.chainId, confirmations: network.confirmations, blockTimeMs: network.blockTimeMs, explorerUrl: network.explorerUrl },
       escrow: client.escrow, escrowUrl: explorerAddress(network, client.escrow),
       token: client.token, tokenUrl: explorerAddress(network, client.token),
-      head: String(indexer.head), roleLabels, balances, policy, jobs, sync: indexer.status(),
+      head: idx.head, roleLabels, balances, policy, jobs, sync: idx.sync, indexSource: idx.source,
       polledAt: new Date().toISOString(),
     };
-    lastError = null;
+    lastError = idx.sourceError ? `index: ${idx.sourceError}` : null;
   }
 
   function kick() {
     // Refresh in the background so a long history catch-up never blocks the HTTP response.
-    const syncing = indexer?.status().syncing;
-    if (inFlight || (!syncing && Date.now() - lastPoll < POLL_MS)) return;
+    // A local scan that is catching up polls continuously; a relay index is just read on the normal interval.
+    const fast = syncing && !relayUrl;
+    if (inFlight || (!fast && Date.now() - lastPoll < POLL_MS)) return;
     lastPoll = Date.now();
     inFlight = refresh()
       .catch((e) => {

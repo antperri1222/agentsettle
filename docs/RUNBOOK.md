@@ -96,7 +96,13 @@ npm run dev                       # dashboard → On-chain shows Base Sepolia wi
 ```
 Each run writes a receipt log to `.agentsettle/sepolia-runs/`.
 
-**Dashboard indexing on a free RPC tier.** Alchemy's free tier only allows `eth_getLogs` over 10 blocks per request (viem reports the refusal as "JSON is not a valid request object"). The indexer detects this and steps down to 10-block requests automatically, catches up in windows with a progress banner, and checkpoints to `.agentsettle/index-*.json` so restarts only scan the gap since the last run. Base Sepolia makes ~43k blocks/day, so a dashboard left off for days will take a while to catch up; `INDEXER_CONCURRENCY` (default 2) trades speed against rate limits. A paid RPC tier or a hosted indexer removes the limit. `AgentSettleClient.connect` refuses if the RPC chain ID ≠ 84532 or the escrow's `usdc()` is not the verified address.
+**Indexing (block speed matters).** Since Base's Denim upgrade, blocks come every 200 ms: about **430,000 blocks a day**. Alchemy's free tier only allows `eth_getLogs` over 10 blocks per request (viem reports the refusal as "JSON is not a valid request object"), which would mean ~43,000 requests per day of history. So:
+- **With a relay (recommended),** the relay runs one shared, always-on indexer (`ESCROW_DEPLOY_BLOCK` set), checkpointed to its volume and served at `GET /v1/index`. Dashboards with `AGENTSETTLE_RELAY_URL` in `.env` read jobs from there and only call the RPC for balances and the spend policy. Give the relay an `INDEXER_RPC_URL` that allows wide `eth_getLogs` ranges (e.g. Base's public `https://sepolia.base.org`, paced by `INDEXER_RPS`, default 5). The indexer steps down 500 → 100 → 10 blocks automatically if a provider refuses, and `/health` shows its progress and current range.
+- **Without a relay,** the dashboard scans history itself with the same step-down, pacing and checkpoint (`.agentsettle/index-*.json`), but a dashboard left off for a day has ~430k blocks to catch up.
+
+**Confirmations are time-based.** On Base Sepolia a transaction counts as confirmed after ~5 s of blocks (25 blocks at 200 ms; `confirmationsFor()` in `sdk/networks.ts`). A fixed "3 blocks" would now be only 0.6 s.
+
+`AgentSettleClient.connect` refuses if the RPC chain ID ≠ 84532 or the escrow's `usdc()` is not the verified address.
 
 Rehearsed 2026-11-03 on a local chain impersonating Base Sepolia (chain 84532, stand-in USDC at the verified address, keystore signers, the real deploy script): all milestone checks passed.
 

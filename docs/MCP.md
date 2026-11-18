@@ -103,8 +103,10 @@ The repo includes `railway.json` (start command `node relay/server.ts`, health c
    - `ESCROW_ADDRESS=0xAd8D1D5f595803E01415f96AB6d41f14B2cc8F99`
    - `BASE_SEPOLIA_RPC_URL=<an Alchemy Base Sepolia URL>` (a separate Alchemy app for the relay keeps its quota apart from your agents)
    - `RELAY_DATA_DIR=/data`
+   - `ESCROW_DEPLOY_BLOCK=60130379` (turns on the shared event indexer, served at `/v1/index`)
+   - `INDEXER_RPC_URL=https://sepolia.base.org` (optional, recommended: a history source that allows wide block ranges, so the indexer doesn't burn Alchemy free-tier quota 10 blocks at a time)
 3. **Volume:** add one mounted at `/data`, so stored files survive redeploys.
 4. **Networking → Generate Domain.** Check `https://<domain>/health` returns `{"ok":true,…,"chainId":84532}`.
-5. On each agent machine, add `AGENTSETTLE_RELAY_URL=https://<domain>` to `.env` and restart Claude.
+5. On each agent machine, add `AGENTSETTLE_RELAY_URL=https://<domain>` to `.env` and restart Claude. The dashboard (`npm run dev`) then reads jobs from the relay's index too.
 
 Railway sets `PORT`, and the relay then binds `0.0.0.0` automatically. The relay holds no keys; the only secret is the RPC URL.

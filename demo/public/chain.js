@@ -76,8 +76,9 @@
     $('chainOff').textContent = notices.join(' ');
     $('chainOn').hidden = false;
     $('chainEyebrow').textContent = data.network.label;
-    $('chainBadge').textContent = `chain ${data.network.chainId} · ${data.network.confirmations} conf threshold`;
-    $('cHead').textContent = `head block ${data.head} · polled ${new Date(data.polledAt).toLocaleTimeString()}`;
+    const secs = data.network.blockTimeMs ? ` (~${Math.round((data.network.confirmations * data.network.blockTimeMs) / 100) / 10}s)` : '';
+    $('chainBadge').textContent = `chain ${data.network.chainId} · confirmed after ${data.network.confirmations} blocks${secs}`;
+    $('cHead').textContent = `head block ${data.head} · polled ${new Date(data.polledAt).toLocaleTimeString()}${data.indexSource ? ` · index: ${data.indexSource}` : ''}`;
     $('cEscrowed').textContent = data.balances.escrowContract;
     $('cCount').textContent = String(data.jobs.length);
     $('cSettled').textContent = String(data.jobs.filter((j) => j.settled).length);
