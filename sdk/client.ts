@@ -76,6 +76,15 @@ export interface ConnectOptions {
   onStage?: (stage: TxStage, info: { action: string; hash?: Hex }) => void;
 }
 
+/** Node rejected a transaction because another one from the same wallet already holds that nonce. */
+export function isReplaceable(e: unknown): boolean {
+  for (let cur: any = e; cur; cur = cur.cause) {
+    const text = `${cur.details ?? ''} ${cur.shortMessage ?? ''}`;
+    if (/replacement transaction underpriced|transaction underpriced|already known/i.test(text)) return true;
+  }
+  return false;
+}
+
 function decodeRevert(err: unknown): never {
   if (err instanceof BaseError) {
     const revert = err.walk((e) => e instanceof ContractFunctionRevertedError);
@@ -188,7 +197,22 @@ export class AgentSettleClient {
       decodeRevert(e);
     }
     this.onStage?.('simulated', { action });
-    const hash = await wallet.writeContract(request as any);
+    // If an earlier transaction from this wallet is stuck at the same nonce, the node rejects ours as underpriced.
+    // Re-send with escalating fees (x2, x4, x8) so the new transaction replaces the stuck one.
+    let hash: Hex | undefined;
+    let fees: { maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint } = {};
+    for (let attempt = 0; ; attempt++) {
+      try {
+        hash = await wallet.writeContract({ ...(request as any), ...fees });
+        break;
+      } catch (e) {
+        if (!isReplaceable(e) || attempt >= 3) throw e;
+        const est = await this.publicClient.estimateFeesPerGas();
+        const mult = 2n ** BigInt(attempt + 1);
+        fees = { maxFeePerGas: est.maxFeePerGas * mult, maxPriorityFeePerGas: (est.maxPriorityFeePerGas > 0n ? est.maxPriorityFeePerGas : 1_000_000n) * mult };
+        this.onStage?.('simulated', { action: `${action} (re-sending with ${mult}x fees to replace a stuck transaction)` });
+      }
+    }
     this.onStage?.('broadcast', { action, hash });
     const r = await this.publicClient.waitForTransactionReceipt({ hash, confirmations: this.network.confirmations });
     const stage = r.status === 'success' ? 'confirmed' : 'reverted';
