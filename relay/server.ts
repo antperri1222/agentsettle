@@ -135,8 +135,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (!process.env.ESCROW_ADDRESS) { log('ESCROW_ADDRESS is not set'); process.exit(1); }
     escrow = process.env.ESCROW_ADDRESS;
   }
-  const port = Number(process.env.RELAY_PORT || 8787);
-  const host = process.env.RELAY_HOST || '127.0.0.1';
+  // Hosts like Railway/Render inject PORT and need 0.0.0.0; locally default to loopback only.
+  const port = Number(process.env.RELAY_PORT || process.env.PORT || 8787);
+  const host = process.env.RELAY_HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
   const dataDir = process.env.RELAY_DATA_DIR || join(REPO, '.agentsettle', 'relay');
   createRelay({ network: name, rpcUrl, escrow: escrow as Address, dataDir }).listen(port, host, () => {
     log(`listening on http://${host}:${port} · ${getNetwork(name).label} · escrow ${escrow} · data ${dataDir}`);

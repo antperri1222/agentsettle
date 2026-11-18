@@ -9,3 +9,4 @@ coverage/
 .vscode/
 .agentsettle/
 contracts/broadcast/
+*.bundle

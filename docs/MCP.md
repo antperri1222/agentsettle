@@ -66,3 +66,19 @@ With `npm run chain:up` running and no `AGENTSETTLE_NETWORK` in `.env`, the serv
 - **It holds no keys** and only reads the chain.
 - **Limits:** the relay operator can read content (no encryption yet) and could withhold it; a buyer then simply doesn't approve. Storage is a local folder (`RELAY_DATA_DIR`), so host it with a persistent disk.
 - **On startup**, the MCP server checks that the relay serves the same chain and escrow, and refuses to start otherwise.
+
+### Deploying the relay on Railway
+
+The repo includes `railway.json` (start command `node relay/server.ts`, health check `/health`). In Railway:
+
+1. **New Project → Deploy from GitHub repo →** `antperri1222/agentsettle`.
+2. **Variables:**
+   - `AGENTSETTLE_NETWORK=base-sepolia`
+   - `ESCROW_ADDRESS=0xAd8D1D5f595803E01415f96AB6d41f14B2cc8F99`
+   - `BASE_SEPOLIA_RPC_URL=<an Alchemy Base Sepolia URL>` (a separate Alchemy app for the relay keeps its quota apart from your agents)
+   - `RELAY_DATA_DIR=/data`
+3. **Volume:** add one mounted at `/data`, so stored files survive redeploys.
+4. **Networking → Generate Domain.** Check `https://<domain>/health` returns `{"ok":true,…,"chainId":84532}`.
+5. On each agent machine, add `AGENTSETTLE_RELAY_URL=https://<domain>` to `.env` and restart Claude.
+
+Railway sets `PORT`, and the relay then binds `0.0.0.0` automatically. The relay holds no keys; the only secret is the RPC URL.
