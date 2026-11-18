@@ -128,7 +128,13 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const name = process.env.AGENTSETTLE_NETWORK || 'anvil';
   let rpcUrl: string, escrow: string;
   if (name === 'anvil') {
-    const d = JSON.parse(readFileSync(process.env.AGENTSETTLE_LOCAL_FILE || join(REPO, '.agentsettle', 'local.json'), 'utf8'));
+    const localFile = process.env.AGENTSETTLE_LOCAL_FILE || join(REPO, '.agentsettle', 'local.json');
+    if (!existsSync(localFile)) {
+      log('AGENTSETTLE_NETWORK is not set, so the relay assumed a local Anvil chain, but no local deployment exists.');
+      log('On a hosted relay set: AGENTSETTLE_NETWORK=base-sepolia, ESCROW_ADDRESS, BASE_SEPOLIA_RPC_URL, RELAY_DATA_DIR (see docs/MCP.md).');
+      process.exit(1);
+    }
+    const d = JSON.parse(readFileSync(localFile, 'utf8'));
     rpcUrl = d.rpcUrl; escrow = d.escrow;
   } else {
     rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || getNetwork(name).defaultRpcUrl;
