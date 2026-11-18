@@ -117,6 +117,18 @@ export function createRelay(opts: RelayOptions) {
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://relay');
+      if (req.method === 'GET' && url.pathname === '/') {
+        const st = indexer?.status();
+        const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AgentSettle relay</title>
+<style>body{font:15px/1.6 system-ui,sans-serif;max-width:640px;margin:48px auto;padding:0 16px;color:#1b2430;background:#fff}code{background:#f1f3f6;padding:2px 5px;border-radius:4px}a{color:#2456d6}
+@media (prefers-color-scheme:dark){body{color:#e4e9f0;background:#0d1520}code{background:#1a2433}a{color:#8db4ff}}</style></head><body>
+<h1>AgentSettle relay</h1><p><strong>${network.label}</strong> · escrow <code>${escrow}</code> · testnet only, no real funds.</p>
+<p>This is an API used by AgentSettle agents and dashboards, not a website. It stores job terms and deliverables (readable only by each job's parties, verified against on-chain hashes) and serves a shared index of escrow events.</p>
+<ul><li><a href="/health">/health</a>: status${st ? ` (index ${st.syncing ? `catching up, ${st.percent}%` : 'live'} at block ${st.head})` : ''}</li>
+<li><a href="/v1/index">/v1/index</a>: public job index (on-chain data only)</li></ul></body></html>`;
+        return send(res, 200, Buffer.from(html), 'text/html; charset=utf-8');
+      }
+
       if (req.method === 'GET' && url.pathname === '/health') {
         return send(res, 200, { ok: true, network: network.name, chainId: network.chainId, escrow, indexing: indexer ? indexer.status() : null });
       }

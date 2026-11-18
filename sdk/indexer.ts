@@ -98,6 +98,8 @@ export class EscrowIndexer {
   head = 0n;
   /** Number of eth_getLogs requests made (useful for tests and diagnostics). */
   logRequests = 0;
+  /** Whether the most recent poll scanned all the way to the chain head (i.e. we are live, not catching up). */
+  private reachedHead = false;
   private blockRange: bigint;
   private readonly concurrency: number;
   private readonly maxBlocksPerPoll: bigint;
@@ -217,7 +219,7 @@ export class EscrowIndexer {
     this.head = head;
     const safe = head - BigInt(this.network.confirmations - 1); // block with exactly `confirmations` confs
     const from = this.committedThrough + 1n;
-    if (from > head) { this.tentative = []; return; }
+    if (from > head) { this.tentative = []; this.reachedHead = true; return; }
     const windowEnd = from + this.maxBlocksPerPoll - 1n;
     const to = windowEnd < head ? windowEnd : head;
     const logs = await this.fetch(from, to);
@@ -228,6 +230,7 @@ export class EscrowIndexer {
     await Promise.all([...nowCommitted, ...this.tentative].map((l) => this.receipt(l.txHash)));
     this.committed.push(...nowCommitted);
     if (commitTo > this.committedThrough) this.committedThrough = commitTo;
+    this.reachedHead = to === head;
     this.saveCheckpoint();
   }
 
@@ -237,12 +240,14 @@ export class EscrowIndexer {
   }
 
   status(): SyncStatus {
+    // "Syncing" means the last scan stopped short of the head (catching up on history). Being a few blocks behind
+    // between polls, or holding the newest blocks back until they are confirmed, is normal live operation.
     const total = this.head - this.startBlock + 1n;
     const done = this.committedThrough - this.startBlock + 1n;
-    const behind = this.head - this.committedThrough > BigInt(this.network.confirmations);
+    const syncing = !this.reachedHead;
     return {
-      syncing: behind, startBlock: String(this.startBlock), scannedThrough: String(this.committedThrough), head: String(this.head),
-      percent: total > 0n ? Math.min(100, Number((done * 100n) / total)) : 100, blockRange: String(this.blockRange),
+      syncing, startBlock: String(this.startBlock), scannedThrough: String(this.committedThrough), head: String(this.head),
+      percent: !syncing ? 100 : total > 0n ? Math.min(99, Number((done * 100n) / total)) : 0, blockRange: String(this.blockRange),
     };
   }
 

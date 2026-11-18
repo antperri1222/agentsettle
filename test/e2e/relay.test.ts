@@ -103,6 +103,15 @@ test('relay serves a shared event index; the dashboard reads jobs from it instea
     assert.equal(idx.chainId, 31337);
     const health = await (await fetch(`${url}/health`)).json();
     assert.equal(health.indexing.syncing, false);
+    assert.equal(health.indexing.percent, 100);
+    // Live lag (head moved on since the last poll, newest blocks not yet confirmed) is not "catching up".
+    for (let i = 0; i < 3; i++) await fetch(d.rpcUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'evm_mine', params: [] }) });
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal((await (await fetch(`${url}/v1/index`)).json()).sync.syncing, false, 'live lag must not show as syncing');
+    // Root URL explains what the relay is instead of a bare 404.
+    const root = await fetch(`${url}/`);
+    assert.equal(root.status, 200);
+    assert.match(await root.text(), /AgentSettle relay[\s\S]*\/v1\/index/);
 
     // Dashboard pointed at the relay: jobs come from the relay index, not a local scan.
     const localFile = join(dir, 'local.json');
