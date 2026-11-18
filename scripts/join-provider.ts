@@ -9,7 +9,7 @@
 //      ~/.agentsettle/agentsettle-provider-agent.password (mode 600). The key never leaves this machine.
 //   2. writes .env for the deployment in deployments/base-sepolia.json and its relay
 //   3. checks the relay and the chain, and whether the person hiring you has allowlisted you and sent gas
-//   4. registers the MCP server with Claude Code (if installed) and prints the Codex command
+//   4. registers the MCP server with Claude Code and/or Codex (whichever is installed), or prints the commands
 //
 // The key is as safe as your user account. That is fine for a testnet agent; never put real funds on it.
 import { spawnSync } from 'node:child_process';
@@ -131,24 +131,50 @@ console.log('\n4. Connect your AI agent');
 const node = process.execPath;
 const server = join(REPO, 'mcp', 'server.ts');
 const has = (bin: string) => spawnSync(bin, ['--version'], { stdio: 'ignore' }).status === 0;
-const claudeCmd = ['claude', 'mcp', 'add', SERVER_NAME, '--scope', 'user', '-e', 'AGENTSETTLE_ROLE=provider', '--', node, server];
 const show = (args: string[]) => args.map((a) => (/[\s"]/.test(a) || a.includes('/') ? `"${a}"` : a)).join(' ');
-if (has('claude')) {
-  const registered = spawnSync('claude', ['mcp', 'get', SERVER_NAME], { stdio: 'ignore' }).status === 0;
-  if (registered) ok(`Claude Code: "${SERVER_NAME}" is registered`);
-  else if (process.stdin.isTTY) {
+// Codex gives each MCP tool call 60 s by default; return "pending" (with the tx hash) well before that instead of
+// letting Codex time out while a transaction is still in flight.
+const clients = [
+  { name: 'Claude Code', bin: 'claude', isRegistered: () => spawnSync('claude', ['mcp', 'get', SERVER_NAME], { stdio: 'ignore' }).status === 0,
+    add: ['claude', 'mcp', 'add', SERVER_NAME, '--scope', 'user', '-e', 'AGENTSETTLE_ROLE=provider', '--', node, server], restart: 'Claude Code' },
+  { name: 'Codex', bin: 'codex', isRegistered: () => (spawnSync('codex', ['mcp', 'list'], { encoding: 'utf8' }).stdout ?? '').includes(SERVER_NAME),
+    add: ['codex', 'mcp', 'add', SERVER_NAME, '--env', 'AGENTSETTLE_ROLE=provider', '--env', 'AGENTSETTLE_CONFIRM_TIMEOUT_MS=45000', '--', node, server], restart: 'Codex' },
+];
+for (const c of clients) {
+  const label = `${c.name}:`.padEnd(13);
+  if (!has(c.bin)) { console.log(`  ${label}${show(c.add)}`); continue; }
+  if (c.isRegistered()) { ok(`${c.name}: "${SERVER_NAME}" is registered`); continue; }
+  let done = false;
+  if (process.stdin.isTTY) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const answer = (await rl.question(`  Register "${SERVER_NAME}" with Claude Code now? [Y/n] `)).trim().toLowerCase();
+    const answer = (await rl.question(`  Register "${SERVER_NAME}" with ${c.name} now? [Y/n] `)).trim().toLowerCase();
     rl.close();
     if (answer === '' || answer === 'y' || answer === 'yes') {
-      const r = spawnSync(claudeCmd[0], claudeCmd.slice(1), { stdio: 'inherit' });
-      if (r.status === 0) ok(`Claude Code: registered "${SERVER_NAME}" (restart any open Claude Code sessions)`);
-      else bad('Claude Code registration failed; run the command below yourself');
+      done = spawnSync(c.add[0], c.add.slice(1), { stdio: 'inherit' }).status === 0;
+      if (done) ok(`${c.name}: registered "${SERVER_NAME}" (restart any open ${c.restart} sessions)`);
+      else bad(`${c.name} registration failed; run the command below yourself`);
     }
   }
-  if (!registered) console.log(`  Claude Code: ${show(claudeCmd)}`);
-} else console.log(`  Claude Code: ${show(claudeCmd)}`);
-console.log(`  Codex:       ${show(['codex', 'mcp', 'add', SERVER_NAME, '--env', 'AGENTSETTLE_ROLE=provider', '--', node, server])}`);
+  if (!done) console.log(`  ${label}${show(c.add)}`);
+}
+
+// Codex: ask before any transaction (deliver/refund/dispute; read-only tools run freely) and allow a slower start.
+// Codex validates its config on load, so the edit is checked with `codex mcp get` and rolled back if rejected.
+if (has('codex') && clients[1].isRegistered()) {
+  const cfg = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'config.toml');
+  const header = `[mcp_servers.${SERVER_NAME}]\n`;
+  const before = existsSync(cfg) ? readFileSync(cfg, 'utf8') : '';
+  const start = before.indexOf(header);
+  const rest = start < 0 ? '' : before.slice(start + header.length);
+  const next = /^\[(?!mcp_servers\.agentsettle-provider\.)/m.exec(rest); // the next table that isn't one of ours
+  const own = rest.slice(0, next ? next.index : rest.length);
+  if (before.includes(header) && !/default_tools_approval_mode/.test(own)) {
+    const extra = ['startup_timeout_sec = 30', 'default_tools_approval_mode = "writes"'].filter((l) => !own.includes(l.split(' ')[0]));
+    writeFileSync(cfg, before.replace(header, header + extra.join('\n') + '\n'));
+    if (spawnSync('codex', ['mcp', 'get', SERVER_NAME], { stdio: 'ignore' }).status === 0) ok('Codex: will ask before sending any transaction (default_tools_approval_mode = "writes")');
+    else { writeFileSync(cfg, before); bad(`Codex rejected the approval setting; see docs/PROVIDER_QUICKSTART.md to set it by hand`); }
+  } else if (/default_tools_approval_mode/.test(own)) ok('Codex: tool approval mode already set');
+}
 
 // ── Summary ──
 console.log('');

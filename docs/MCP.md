@@ -61,6 +61,8 @@ npm run mcp:setup -- provider           # same for the provider agent
 
 The flag is defined for Claude Code. Other MCP clients may ignore `_meta`, in which case their normal per-tool approval settings apply, so keep "ask" enabled for payment tools there.
 
+**Codex** works as an MCP client too (`codex mcp add`; `npm run join` does it for providers). Codex doesn't read the `_meta` flag, so set approvals in `~/.codex/config.toml`: `default_tools_approval_mode = "writes"` under the server's table prompts for every tool that isn't read-only (all tools carry MCP read-only/destructive annotations). Codex also limits each tool call to 60 s by default, so register the server with `AGENTSETTLE_CONFIRM_TIMEOUT_MS=45000`. A slow transaction is then reported as `pending` with its hash before Codex gives up on the call. **For a buyer agent in Codex, use `default_tools_approval_mode = "writes"` (or `"prompt"`), never `"approve"`, or payments would go out without a human.**
+
 ## Try it
 
 Buyer (Claude Desktop):

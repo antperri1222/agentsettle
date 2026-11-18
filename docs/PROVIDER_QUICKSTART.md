@@ -22,7 +22,7 @@ This command:
 - **creates a wallet for your agent.** The key is stored encrypted at `~/.foundry/keystores/agentsettle-provider-agent`, and a random password is saved at `~/.agentsettle/agentsettle-provider-agent.password` (readable only by you). The key never leaves your machine, and the file format works with Foundry's `cast` if you use it.
 - **writes `.env`** for the shared testnet deployment and its relay. `.env` is gitignored.
 - **checks** that the relay and the escrow contract are the expected ones.
-- **offers to register** the `agentsettle-provider` MCP server with Claude Code, and prints the `codex mcp add …` command for Codex.
+- **offers to register** the `agentsettle-provider` MCP server with Claude Code and/or Codex, whichever you have installed. If you skip that, it prints the command to run yourself.
 
 The first run ends with **"Not ready yet"** and your provider address. **Send that address to Anthony.** He runs one command that adds you to his buyer agent's list of allowed providers and sends you a little test ETH for transaction fees (`npm run owner -- onboard <your address>`).
 
@@ -30,7 +30,7 @@ Run `npm run join` again until it says **Ready**. Running it again is safe: it k
 
 ## 3. Take a job
 
-Restart Claude Code (or Codex) so it picks up the new server. In Claude Code, `/mcp` should list `agentsettle-provider`. Once Anthony tells you a job is posted, ask your agent:
+Restart Claude Code or Codex so it picks up the new server. Run `/mcp` in either one, and it should list `agentsettle-provider`. Once Anthony tells you a job is posted, ask your agent:
 
 > Check AgentSettle for jobs assigned to me, read the terms, and deliver the work.
 
@@ -51,11 +51,15 @@ Ask your agent `agentsettle_whoami` at any time to see your wallet, gas and netw
 | give the money back (`refund_buyer`) | act on jobs it isn't a party to |
 | open a dispute (`open_dispute`), check a transaction (`tx_status`) | touch mainnet: the code refuses mainnet chain IDs |
 
-`refund_buyer` can't be undone. If you want to approve it yourself, add an `ask` rule in `~/.claude/settings.json`:
+`refund_buyer` can't be undone, so you may want to approve it yourself.
+
+**Claude Code:** add an `ask` rule to `~/.claude/settings.json`:
 
 ```json
 { "permissions": { "ask": ["mcp__agentsettle-provider__agentsettle_refund_buyer"] } }
 ```
+
+**Codex:** `npm run join` sets this up for you. In `~/.codex/config.toml` it adds `default_tools_approval_mode = "writes"` to the `[mcp_servers.agentsettle-provider]` table, so Codex asks before anything that sends a transaction (deliver, refund, dispute) and lets the read-only tools run freely. It also adds `startup_timeout_sec = 30`, since Codex's default is 10 s and the server checks the chain and relay at startup.
 
 ## Things to know
 
@@ -70,6 +74,7 @@ Ask your agent `agentsettle_whoami` at any time to see your wallet, gas and netw
 | `needs Node.js 22.18 or newer` | Install the current LTS (`nvm install --lts`). |
 | `agentsettle-provider` missing in `/mcp` | Run `claude mcp list`. If it's not there, run the `claude mcp add …` line that `npm run join` printed, then restart Claude Code. |
 | `hasn't allowlisted you yet` / `no ETH for fees` | Anthony hasn't run `onboard` for your address yet, or it hasn't confirmed. Wait a minute and run `npm run join` again. |
+| Codex: server fails to start or times out | Run `codex mcp get agentsettle-provider`: it should show `startup_timeout_sec: 30`. If not, run `npm run join` again. |
 | A tool says `status: "pending"` | The transaction is slow, not failed. Ask the agent to check it with `agentsettle_tx_status`. Don't retry. |
 
 ## Feedback we're after

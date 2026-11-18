@@ -70,7 +70,7 @@ test('join creates a private, cast-compatible provider wallet and .env, then rep
   assert.match(envText, new RegExp(`PROVIDER_AGENT_ADDRESS=${address}`));
   assert.match(envText, /AGENTSETTLE_RELAY_URL=http:\/\/127\.0\.0\.1:/);
   assert.match(r.out, /claude mcp add agentsettle-provider --scope user -e AGENTSETTLE_ROLE=provider --/);
-  assert.match(r.out, /codex mcp add agentsettle-provider --env AGENTSETTLE_ROLE=provider --/);
+  assert.match(r.out, /codex mcp add agentsettle-provider --env AGENTSETTLE_ROLE=provider --env AGENTSETTLE_CONFIRM_TIMEOUT_MS=45000 --/, 'Codex: answer before its 60 s tool timeout');
 
   const cast = [process.env.CAST_BIN, join(homedir(), '.foundry', 'bin', 'cast')].find((p) => p && existsSync(p));
   if (cast) {
