@@ -17,7 +17,9 @@ import { getNetwork } from '../sdk/networks.ts';
 import { MAX_BLOB_BYTES, SIGNATURE_WINDOW_SECONDS, readMessage, recoverSigner, uploadMessage, type BlobKind } from '../sdk/relay.ts';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const log = (...a: unknown[]) => console.error('[relay]', ...a);
+// Normal activity → stdout (info); problems → stderr (hosts like Railway show stderr as errors).
+const log = (...a: unknown[]) => console.log('[relay]', ...a);
+const logError = (...a: unknown[]) => console.error('[relay]', ...a);
 
 export interface RelayOptions {
   network: string;
@@ -114,7 +116,7 @@ export function createRelay(opts: RelayOptions) {
       return send(res, 404, { error: 'Not found' });
     } catch (e) {
       const status = (e as { status?: number }).status ?? 500;
-      if (status === 500) log('error', e);
+      if (status === 500) logError('error', e);
       return send(res, status, { error: status === 500 ? 'Internal error' : (e as Error).message });
     }
   });
@@ -130,15 +132,15 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (name === 'anvil') {
     const localFile = process.env.AGENTSETTLE_LOCAL_FILE || join(REPO, '.agentsettle', 'local.json');
     if (!existsSync(localFile)) {
-      log('AGENTSETTLE_NETWORK is not set, so the relay assumed a local Anvil chain, but no local deployment exists.');
-      log('On a hosted relay set: AGENTSETTLE_NETWORK=base-sepolia, ESCROW_ADDRESS, BASE_SEPOLIA_RPC_URL, RELAY_DATA_DIR (see docs/MCP.md).');
+      logError('AGENTSETTLE_NETWORK is not set, so the relay assumed a local Anvil chain, but no local deployment exists.');
+      logError('On a hosted relay set: AGENTSETTLE_NETWORK=base-sepolia, ESCROW_ADDRESS, BASE_SEPOLIA_RPC_URL, RELAY_DATA_DIR (see docs/MCP.md).');
       process.exit(1);
     }
     const d = JSON.parse(readFileSync(localFile, 'utf8'));
     rpcUrl = d.rpcUrl; escrow = d.escrow;
   } else {
     rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || getNetwork(name).defaultRpcUrl;
-    if (!process.env.ESCROW_ADDRESS) { log('ESCROW_ADDRESS is not set'); process.exit(1); }
+    if (!process.env.ESCROW_ADDRESS) { logError('ESCROW_ADDRESS is not set'); process.exit(1); }
     escrow = process.env.ESCROW_ADDRESS;
   }
   // Hosts like Railway/Render inject PORT and need 0.0.0.0; locally default to loopback only.
