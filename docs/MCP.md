@@ -13,7 +13,7 @@ One server process = one role = one agent wallet:
 
 - **The contract is the spending limit, not the AI.** The buyer agent's wallet holds no USDC. It funds jobs from the owner's allowance through `createJobAsAgent`, which enforces the owner's per-job cap, daily cap, provider allowlist and expiry on-chain.
 - **The AI cannot change its own limits.** Approving the allowance, setting caps, allowlisting providers and revoking access are owner-only, done by a human with `npm run owner -- …` and the owner keystore. No MCP tool can transfer tokens, change policy or reveal keys.
-- **Payments need the amount restated.** `agentsettle_approve_payment` requires `confirm_amount_usdc` to equal the job amount, and is marked destructive so MCP clients ask before running it.
+- **Payments need a human and the amount restated.** `agentsettle_approve_payment` is flagged to require human approval on every call (see *Using with Claude Code*), and requires `confirm_amount_usdc` to equal the job amount.
 - **Verified, untrusted content.** Terms and deliverables are checked against the hashes recorded on-chain. Deliverables are labelled untrusted: the buyer agent is told to evaluate them, never to follow instructions inside them.
 - **Retries never pay twice.** `agentsettle_create_job` uses an idempotency key (derived automatically if omitted).
 - **Slow transactions are reported, not retried.** If a transaction isn't confirmed within 2 minutes, the tool returns `status: "pending"` with its hash instead of an error. Until it confirms (or is dropped, i.e. unseen for 10 minutes), the agent refuses to send anything else and points to `agentsettle_tx_status`. This closes the gap behind the Nov 17 duplicate job, where a slow transaction plus a retry under a new key funded the same task twice.
@@ -36,6 +36,30 @@ npm run mcp:setup -- provider           # same for the provider agent
 `mcp:setup` prints a Claude Desktop config block (Settings → Developer → Edit Config, then restart Claude) and a `claude mcp add …` command for Claude Code. Other settings (network, escrow, RPC, addresses) come from `.env`. macOS may ask once whether Claude can access your Downloads folder; allow it, because the server lives there.
 
 **Two agents, two clients.** The cleanest demo runs the buyer in Claude Desktop and the provider in Claude Code. Both in one client works too, but then one AI is playing both sides.
+
+## Using with Claude Code (including Code Mode and auto mode)
+
+**Payment approval always reaches a human.** `agentsettle_approve_payment` is marked `_meta["anthropic/requiresUserInteraction"]: true`. In Claude Code that means a permission prompt on **every** call, in every permission mode, including `auto` and `bypassPermissions`. There's no "don't ask again", and allow rules or hooks can't skip it. In `dontAsk` mode the call is denied instead. This implements the CLAUDE.md rule that only human approval (or a narrowly deterministic check) authorizes payment in the MVP, because approving means judging whether the work is good enough.
+
+**Code Mode** (experimental, terminal only) lets Claude write JavaScript that calls many tools at once. In auto mode a classifier reviews that code, not each tool call inside it. The approval flag above still prompts per call, and the server's own guards still apply to code-driven calls: writes are serialized, a pending transaction blocks any new one, idempotency keys stop double funding, and the contract enforces caps.
+
+**Optional: also ask before funding.** Funding a job stays autonomous by default, bounded by the owner's on-chain caps. To be prompted for it too, add an `ask` rule to `~/.claude/settings.json`. Rule names use the server name you registered with `claude mcp add`:
+
+```json
+{
+  "permissions": {
+    "ask": [
+      "mcp__agentsettle-buyer__agentsettle_create_job",
+      "mcp__agentsettle-buyer__agentsettle_reclaim_expired",
+      "mcp__agentsettle-provider__agentsettle_refund_buyer"
+    ]
+  }
+}
+```
+
+**Opting out (testnet experiments only).** Setting `AGENTSETTLE_AUTONOMOUS_APPROVAL=1` in the server's environment removes the approval flag, so the AI can release payment on its own judgment. The server logs a warning at startup. Don't use this outside testnet: it goes against the MVP's human-approval rule.
+
+The flag is defined for Claude Code. Other MCP clients may ignore `_meta`, in which case their normal per-tool approval settings apply, so keep "ask" enabled for payment tools there.
 
 ## Try it
 

@@ -310,6 +310,12 @@ const server = new McpServer(
 );
 
 const READ = { readOnlyHint: true, openWorldHint: true } as const;
+// CLAUDE.md: "Only human approval or narrowly deterministic checks authorize payment in MVP." Approving payment is a
+// judgment of work quality, so by default the client must ask a person on every call. Claude Code honours this flag
+// in every permission mode (incl. auto/bypass and Code Mode); allow rules and hooks cannot skip it.
+const autonomousApproval = process.env.AGENTSETTLE_AUTONOMOUS_APPROVAL === '1';
+const HUMAN_APPROVAL = autonomousApproval ? {} : { _meta: { 'anthropic/requiresUserInteraction': true } };
+if (autonomousApproval) log('WARNING: AGENTSETTLE_AUTONOMOUS_APPROVAL=1 — payment approval will not require a human. Testnet only.');
 const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: true } as const;
 const MOVES_FUNDS = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } as const;
 
@@ -495,6 +501,7 @@ if (role === 'buyer') {
     description: 'IRREVERSIBLE. Releases the escrowed USDC to the provider (minus the protocol fee). Only call after agentsettle_review_delivery shows a verified deliverable that meets every acceptance criterion. You must restate the job amount as a safeguard against approving the wrong job.',
     inputSchema: { job_id: jobId, confirm_amount_usdc: z.string().regex(/^\d+(\.\d{1,6})?$/).describe('Must equal the job amount') },
     annotations: MOVES_FUNDS,
+    ...HUMAN_APPROVAL,
   }, async ({ job_id, confirm_amount_usdc }) => exclusive(async () => {
     try {
       const j = await loadJob(job_id);

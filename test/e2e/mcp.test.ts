@@ -81,6 +81,10 @@ test('each role exposes only its own tools; nothing can move tokens, change poli
   }
   const approve = (await buyer.listTools()).tools.find((t) => t.name === 'agentsettle_approve_payment')!;
   assert.equal(approve.annotations?.destructiveHint, true);
+  // Payment approval must reach a human on every call (Claude Code honours this even in auto mode / Code Mode).
+  assert.equal(approve._meta?.['anthropic/requiresUserInteraction'], true);
+  const create = (await buyer.listTools()).tools.find((t) => t.name === 'agentsettle_create_job')!;
+  assert.equal(create._meta?.['anthropic/requiresUserInteraction'], undefined, 'funding stays autonomous within on-chain caps');
 });
 
 test('full agent-to-agent job through MCP: create → find → deliver → verified review → approve', async () => {
@@ -252,4 +256,12 @@ test('a slow transaction is reported as pending and blocks a duplicate payment (
     await pub.request({ method: 'evm_setAutomine' as any, params: [true] as any });
     await b3.close();
   }
+});
+
+test('AGENTSETTLE_AUTONOMOUS_APPROVAL=1 removes the human-approval flag (explicit opt-out)', async () => {
+  const auto = await connect('buyer', { AGENTSETTLE_AUTONOMOUS_APPROVAL: '1', AGENTSETTLE_DATA_DIR: join(tmp, 'auto') });
+  try {
+    const approve = (await auto.listTools()).tools.find((t) => t.name === 'agentsettle_approve_payment')!;
+    assert.equal(approve._meta?.['anthropic/requiresUserInteraction'], undefined);
+  } finally { await auto.close(); }
 });
