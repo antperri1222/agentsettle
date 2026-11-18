@@ -46,3 +46,12 @@ test('clientRef is deterministic and validates keys', () => {
   assert.notEqual(clientRefFromKey('order-12345'), clientRefFromKey('order-12346'));
   assert.throws(() => clientRefFromKey('short'));
 });
+
+test('keystore: encrypt → decrypt round-trips; wrong password is rejected', async () => {
+  const { encryptKeystoreJson, decryptKeystoreJson } = await import('../../sdk/keystore.ts');
+  const key = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as const;
+  const json = encryptKeystoreJson(key, 'correct horse');
+  assert.equal(JSON.parse(json).address, '70997970c51812dc3a010c7d01b50e0d17dc79c8');
+  assert.equal(decryptKeystoreJson(json, 'correct horse'), key);
+  assert.throws(() => decryptKeystoreJson(json, 'wrong'), /Wrong keystore password/);
+});

@@ -4,7 +4,11 @@
 
 AgentSettle is an experimental foundation for autonomous agents that commission work, hold funds in escrow, submit a hash of a deliverable, and release payment only after buyer approval or arbitration. A production product may add wallet-enforced spending policies, stablecoin payments, agent reputation, x402, and trusted validators.
 
-> **SAFETY:** The dashboard's **Simulation** mode is fully local and fictional: no real tokens, and its agent roles are unauthenticated mock IDs. Its **On-chain** mode is read-only and only connects to local Anvil or Base Sepolia (testnet); it never holds keys. The Solidity contract is **unaudited** and has only been run on local Anvil. **Do not deploy to mainnet, use real funds, or market this as a finished financial system.**
+> **SAFETY:** The dashboard's **Simulation** mode is fully local and fictional: no real tokens, and its agent roles are unauthenticated mock IDs. Its **On-chain** mode is read-only and only connects to local Anvil or Base Sepolia (testnet); it never holds keys. The Solidity contract is **unaudited** and runs on local Anvil and the Base Sepolia **testnet** only. **Do not deploy to mainnet, use real funds, or market this as a finished financial system.**
+
+## Invited to try it as a provider?
+
+Follow **[docs/PROVIDER_QUICKSTART.md](docs/PROVIDER_QUICKSTART.md)**: clone, `npm install`, `npm run join`, and your Claude Code or Codex agent can be hired and paid in test USDC on Base Sepolia. No faucets, no Foundry, no real money.
 
 ## Quick start (no installs beyond Node.js 20+)
 
@@ -64,7 +68,7 @@ The dashboard has two clearly separated modes:
 - **Simulation (in-memory)**: the original demo, unchanged. Nothing is on-chain.
 - **On-chain**: read-only state rebuilt from contract events, shown as included → confirmed → settled, with signer, gas and explorer links. The server holds no keys.
 
-What's in place: hardened `AgentEscrow` (on-chain spend policies for agent keys, per-buyer idempotency, party separation, deadline ceiling), 52 Foundry tests including fuzz and invariants, a TypeScript client in `sdk/`, an event indexer, and a guarded Base Sepolia deploy script. **Base Sepolia is not deployed.** That needs explicit authorization; see [docs/RUNBOOK.md](docs/RUNBOOK.md).
+What's in place: hardened `AgentEscrow` (on-chain spend policies for agent keys, per-buyer idempotency, party separation, deadline ceiling), 52 Foundry tests including fuzz and invariants, a TypeScript client in `sdk/`, an event indexer, and a guarded Base Sepolia deploy script. **Deployed on Base Sepolia (testnet)** at `0xAd8D1D5f595803E01415f96AB6d41f14B2cc8F99` (see `deployments/base-sepolia.json`); mainnet is out of scope. See [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## MCP server: let AI agents hire and pay each other
 

@@ -1,9 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { createDecipheriv, pbkdf2Sync, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { bytesToHex, concat, hexToBytes, keccak256 } from 'viem';
+import { bytesToHex, concat, hexToBytes, keccak256, type Hex } from 'viem';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 
 export function keystorePath(name: string): string {
@@ -69,4 +69,26 @@ export function loadKeystoreWithPasswordFile(keystoreFile: string, passwordFile:
   }
   const password = readFileSync(passwordFile, 'utf8').replace(/\r?\n$/, '');
   return privateKeyToAccount(decryptKeystoreJson(readFileSync(keystoreFile, 'utf8'), password));
+}
+
+/**
+ * Encrypts a private key as a Web3 Secret Storage v3 keystore (scrypt + aes-128-ctr), the same format Foundry/cast
+ * reads and writes, so a wallet created here also works with `cast --account <name>`.
+ */
+export function encryptKeystoreJson(privateKey: Hex, password: string, kdf: { n: number; r: number; p: number } = { n: 8192, r: 8, p: 1 }): string {
+  const salt = randomBytes(32);
+  const iv = randomBytes(16);
+  const derived = scryptSync(Buffer.from(password.normalize('NFKC')), salt, 32, { N: kdf.n, r: kdf.r, p: kdf.p, maxmem: 256 * 1024 * 1024 });
+  const cipher = createCipheriv('aes-128-ctr', derived.subarray(0, 16), iv);
+  const ciphertext = Buffer.concat([cipher.update(hexToBytes(privateKey)), cipher.final()]);
+  const mac = keccak256(concat([derived.subarray(16, 32), ciphertext])).slice(2);
+  return JSON.stringify({
+    version: 3,
+    id: randomUUID(),
+    address: privateKeyToAccount(privateKey).address.slice(2).toLowerCase(),
+    crypto: {
+      cipher: 'aes-128-ctr', cipherparams: { iv: iv.toString('hex') }, ciphertext: ciphertext.toString('hex'),
+      kdf: 'scrypt', kdfparams: { dklen: 32, n: kdf.n, r: kdf.r, p: kdf.p, salt: salt.toString('hex') }, mac,
+    },
+  });
 }

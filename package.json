@@ -20,7 +20,8 @@
     "mcp:setup": "node --env-file-if-exists=.env scripts/mcp-setup.ts",
     "owner": "node --env-file-if-exists=.env scripts/owner.ts",
     "mcp:install-desktop": "node --env-file-if-exists=.env scripts/install-claude-desktop.mjs",
-    "relay": "node relay/server.ts"
+    "relay": "node relay/server.ts",
+    "join": "node scripts/join.mjs"
   },
   "engines": {
     "node": ">=22.18"
