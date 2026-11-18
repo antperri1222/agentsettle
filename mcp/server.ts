@@ -18,11 +18,11 @@ import {
 } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { agentEscrowAbi } from '../sdk/artifacts.ts';
-import { AgentSettleClient, AgentSettleError, type Job, type TxReceipt } from '../sdk/client.ts';
+import { AgentSettleClient, AgentSettleError, TxPendingError, type Job, type TxReceipt } from '../sdk/client.ts';
 import { keystorePath, loadKeystoreWithPasswordFile } from '../sdk/keystore.ts';
 import { RelayClient } from '../sdk/relay.ts';
 import { devAccount, localChain } from '../sdk/local.ts';
-import { explorerAddress, getNetwork } from '../sdk/networks.ts';
+import { explorerAddress, explorerTx, getNetwork } from '../sdk/networks.ts';
 import { canonicalTerms, clientRefFromKey, formatUsdcUnits, hashEvidence, hashTerms, parseUsdcUnits, type TaskTermsV1 } from '../sdk/terms.ts';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -85,6 +85,7 @@ const publicClient = createPublicClient({ chain, transport: http(rpcUrl) }) as P
 const wallet = createWalletClient({ account, chain, transport: http(rpcUrl) });
 const client = await AgentSettleClient.connect({
   network, publicClient, escrowAddress, wallet, expectedTokenAddress: expectedToken,
+  confirmTimeoutMs: Number(process.env.AGENTSETTLE_CONFIRM_TIMEOUT_MS || 120_000),
 }).catch((e) => { log(`Connection refused: ${(e as Error).message}`); process.exit(1); });
 const me = account.address;
 
@@ -110,10 +111,50 @@ log(`role=${role} address=${me} network=${network.label} escrow=${escrowAddress}
 
 // ───────────────────────────── helpers ─────────────────────────────
 
+// ── In-flight transaction journal ──
+// A transaction that was broadcast but not yet confirmed may still land. Retrying it blindly is how a slow network
+// turns into a double payment, so while one is pending this agent refuses new writes and points at agentsettle_tx_status.
+type PendingTx = { hash: Hex; action: string; at: string };
+const journalFile = join(dataDir, 'notes', `pending-${role}-${me.toLowerCase()}.json`);
+const DROP_AFTER_MS = 10 * 60_000; // unseen this long after broadcast = dropped by the network, safe to retry
+
+function readJournal(): PendingTx[] {
+  try { return existsSync(journalFile) ? JSON.parse(readFileSync(journalFile, 'utf8')) : []; } catch { return []; }
+}
+function writeJournal(entries: PendingTx[]) { writeFileSync(journalFile, JSON.stringify(entries, null, 2)); }
+function recordPending(e: TxPendingError) { writeJournal([...readJournal().filter((x) => x.hash !== e.hash), { hash: e.hash, action: e.action, at: new Date().toISOString() }]); }
+
+/** Re-checks journaled transactions; returns the first one still in flight (or null), pruning settled/dropped ones. */
+async function stillPending(): Promise<PendingTx | null> {
+  const keep: PendingTx[] = [];
+  for (const e of readJournal()) {
+    const st = await client.txStatus(e.hash);
+    const young = Date.now() - Date.parse(e.at) < DROP_AFTER_MS;
+    if (st.status === 'pending' || (st.status === 'not_found' && young)) keep.push(e);
+  }
+  writeJournal(keep);
+  return keep[0] ?? null;
+}
+
 let queue: Promise<unknown> = Promise.resolve();
-/** Serialises writes so concurrent tool calls never race on the wallet nonce. */
-function exclusive<T>(fn: () => Promise<T>): Promise<T> {
-  const run = queue.then(fn, fn);
+/** Serialises writes (no nonce races) and refuses new ones while an earlier transaction is still in flight. */
+function exclusive<T>(fn: () => Promise<T>): Promise<T | ReturnType<typeof ok>> {
+  const guarded = async () => {
+    const p = await stillPending();
+    if (p) {
+      return {
+        isError: true,
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          error: 'PreviousTxPending',
+          message: `An earlier ${p.action} transaction (${p.hash}) is still unconfirmed. Nothing new was sent.`,
+          hint: 'Do not retry or create a replacement job. Check it with agentsettle_tx_status; once it confirms (or is reported dropped) you can continue.',
+          explorer_url: explorerTx(network, p.hash),
+        }, null, 2) }],
+      } as any;
+    }
+    return fn();
+  };
+  const run = queue.then(guarded, guarded);
   queue = run.catch(() => undefined);
   return run;
 }
@@ -132,6 +173,13 @@ const HINTS: Record<string, string> = {
 };
 
 function fail(e: unknown) {
+  if (e instanceof TxPendingError) {
+    recordPending(e);
+    return ok({
+      status: 'pending', action: e.action, tx_hash: e.hash, explorer_url: explorerTx(network, e.hash),
+      message: 'Broadcast but not confirmed yet. It may still go through: do NOT retry or create a new job. Check with agentsettle_tx_status.',
+    });
+  }
   let code = e instanceof AgentSettleError ? e.code : 'Error';
   let msg = e instanceof Error ? (e as any).shortMessage ?? e.message : String(e);
   if (/allowance/i.test(`${code} ${msg}`)) {
@@ -347,6 +395,25 @@ server.registerTool('agentsettle_get_job', {
   annotations: READ,
 }, async ({ job_id }) => {
   try { return ok(await jobView(await loadJob(job_id))); } catch (e) { return fail(e); }
+});
+
+server.registerTool('agentsettle_tx_status', {
+  title: 'Check a transaction',
+  description: 'Reports whether a transaction this agent sent is pending, confirmed, reverted or not found (dropped). For a job creation it also returns the new job id. Use this when a write tool reported "pending" instead of retrying.',
+  inputSchema: { tx_hash: z.string().regex(/^0x[0-9a-fA-F]{64}$/).describe('Transaction hash') },
+  annotations: READ,
+}, async ({ tx_hash }) => {
+  try {
+    const st = await client.txStatus(tx_hash as Hex);
+    if (st.status !== 'pending') writeJournal(readJournal().filter((x) => x.hash.toLowerCase() !== tx_hash.toLowerCase() || st.status === 'not_found' && Date.now() - Date.parse(x.at) < DROP_AFTER_MS));
+    const advice = {
+      pending: 'Still in the network queue. Wait and check again; do not send a replacement.',
+      confirmed: 'Done. Continue from here.',
+      reverted: 'The transaction failed on-chain; nothing changed. It is safe to try again.',
+      not_found: 'The network has no record of it. If it was sent more than 10 minutes ago it was dropped and it is safe to try again.',
+    }[st.status];
+    return ok({ ...st, ...('jobId' in st && st.jobId ? { job_id: st.jobId } : {}), advice });
+  } catch (e) { return fail(e); }
 });
 
 server.registerTool('agentsettle_open_dispute', {

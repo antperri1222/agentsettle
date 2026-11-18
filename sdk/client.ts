@@ -1,5 +1,6 @@
 import {
   BaseError,
+  WaitForTransactionReceiptTimeoutError,
   ContractFunctionRevertedError,
   decodeEventLog,
   getAddress,
@@ -74,7 +75,24 @@ export interface ConnectOptions {
   /** Anvil only: token address deployed this session (Base Sepolia uses the verified registry address). */
   expectedTokenAddress?: Address;
   onStage?: (stage: TxStage, info: { action: string; hash?: Hex }) => void;
+  /** How long to wait for confirmation before reporting the transaction as pending (default 120 s). */
+  confirmTimeoutMs?: number;
 }
+
+/** A transaction was broadcast but not confirmed in time. It may still confirm: never re-send blindly. */
+export class TxPendingError extends AgentSettleError {
+  hash: Hex;
+  action: string;
+  constructor(action: string, hash: Hex) {
+    super('TxPending', `${action} was broadcast (${hash}) but is not confirmed yet. It may still confirm; check its status instead of retrying.`);
+    this.hash = hash;
+    this.action = action;
+  }
+}
+
+export type TxStatus =
+  | { status: 'confirmed' | 'reverted'; hash: Hex; blockNumber: bigint; confirmations: number; jobId: bigint | null; explorerUrl: string | null }
+  | { status: 'pending' | 'not_found'; hash: Hex; explorerUrl: string | null };
 
 /** Node rejected a transaction because another one from the same wallet already holds that nonce. */
 export function isReplaceable(e: unknown): boolean {
@@ -103,6 +121,7 @@ export class AgentSettleClient {
   readonly token: Address;
   readonly wallet?: Wallet;
   private onStage?: ConnectOptions['onStage'];
+  private readonly confirmTimeoutMs: number;
 
   private constructor(o: ConnectOptions, token: Address) {
     this.network = o.network;
@@ -111,6 +130,7 @@ export class AgentSettleClient {
     this.token = token;
     this.wallet = o.wallet;
     this.onStage = o.onStage;
+    this.confirmTimeoutMs = o.confirmTimeoutMs ?? 120_000;
   }
 
   /**
@@ -199,22 +219,32 @@ export class AgentSettleClient {
     this.onStage?.('simulated', { action });
     // If an earlier transaction from this wallet is stuck at the same nonce, the node rejects ours as underpriced.
     // Re-send with escalating fees (x2, x4, x8) so the new transaction replaces the stuck one.
+    // Fee headroom: cap at 2x the current estimate so a base-fee rise doesn't strand the transaction. Only the actual
+    // base fee + tip is charged, so the headroom costs nothing unless it is needed.
+    const est = await this.publicClient.estimateFeesPerGas();
+    const tip = est.maxPriorityFeePerGas > 0n ? est.maxPriorityFeePerGas : 1_000_000n;
+    let fees = { maxFeePerGas: est.maxFeePerGas * 2n + tip, maxPriorityFeePerGas: tip };
     let hash: Hex | undefined;
-    let fees: { maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint } = {};
     for (let attempt = 0; ; attempt++) {
       try {
         hash = await wallet.writeContract({ ...(request as any), ...fees });
         break;
       } catch (e) {
+        // An earlier transaction from this wallet holds the same nonce: re-send with 2x/4x/8x fees to replace it.
         if (!isReplaceable(e) || attempt >= 3) throw e;
-        const est = await this.publicClient.estimateFeesPerGas();
         const mult = 2n ** BigInt(attempt + 1);
-        fees = { maxFeePerGas: est.maxFeePerGas * mult, maxPriorityFeePerGas: (est.maxPriorityFeePerGas > 0n ? est.maxPriorityFeePerGas : 1_000_000n) * mult };
+        fees = { maxFeePerGas: fees.maxFeePerGas * 2n, maxPriorityFeePerGas: fees.maxPriorityFeePerGas * 2n };
         this.onStage?.('simulated', { action: `${action} (re-sending with ${mult}x fees to replace a stuck transaction)` });
       }
     }
     this.onStage?.('broadcast', { action, hash });
-    const r = await this.publicClient.waitForTransactionReceipt({ hash, confirmations: this.network.confirmations });
+    let r;
+    try {
+      r = await this.publicClient.waitForTransactionReceipt({ hash, confirmations: this.network.confirmations, timeout: this.confirmTimeoutMs });
+    } catch (e) {
+      if (e instanceof WaitForTransactionReceiptTimeoutError) throw new TxPendingError(action, hash);
+      throw e;
+    }
     const stage = r.status === 'success' ? 'confirmed' : 'reverted';
     this.onStage?.(stage, { action, hash });
     const receipt: TxReceipt = {
@@ -223,6 +253,26 @@ export class AgentSettleClient {
     };
     if (stage === 'reverted') throw Object.assign(new AgentSettleError('TxReverted', `${action} reverted on-chain (${hash})`), { receipt });
     return receipt;
+  }
+
+  /** Where a broadcast transaction stands. For a job creation, also returns the new job id once confirmed. */
+  async txStatus(hash: Hex): Promise<TxStatus> {
+    const explorerUrl = explorerTx(this.network, hash);
+    const r = await this.publicClient.getTransactionReceipt({ hash }).catch(() => null);
+    if (r) {
+      const head = await this.publicClient.getBlockNumber();
+      let jobId: bigint | null = null;
+      for (const log of r.logs) {
+        if (getAddress(log.address) !== this.escrow) continue;
+        try {
+          const ev = decodeEventLog({ abi: agentEscrowAbi, data: log.data, topics: log.topics });
+          if (ev.eventName === 'JobCreated') jobId = ev.args.id;
+        } catch {}
+      }
+      return { status: r.status === 'success' ? 'confirmed' : 'reverted', hash, blockNumber: r.blockNumber, confirmations: Number(head - r.blockNumber + 1n), jobId, explorerUrl };
+    }
+    const tx = await this.publicClient.getTransaction({ hash }).catch(() => null);
+    return { status: tx ? 'pending' : 'not_found', hash, explorerUrl };
   }
 
   /** Approves EXACTLY `amount` (never unlimited). USDC approve overwrites the previous allowance. */

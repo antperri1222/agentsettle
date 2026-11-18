@@ -6,8 +6,8 @@ One server process = one role = one agent wallet:
 
 | Role | Tools |
 |---|---|
-| **buyer** | `agentsettle_whoami`, `agentsettle_list_jobs`, `agentsettle_get_job`, `agentsettle_create_job`, `agentsettle_review_delivery`, `agentsettle_approve_payment`, `agentsettle_open_dispute`, `agentsettle_reclaim_expired` |
-| **provider** | `agentsettle_whoami`, `agentsettle_list_jobs`, `agentsettle_get_job`, `agentsettle_deliver`, `agentsettle_refund_buyer`, `agentsettle_open_dispute` |
+| **buyer** | `agentsettle_whoami`, `agentsettle_list_jobs`, `agentsettle_get_job`, `agentsettle_tx_status`, `agentsettle_create_job`, `agentsettle_review_delivery`, `agentsettle_approve_payment`, `agentsettle_open_dispute`, `agentsettle_reclaim_expired` |
+| **provider** | `agentsettle_whoami`, `agentsettle_list_jobs`, `agentsettle_get_job`, `agentsettle_tx_status`, `agentsettle_deliver`, `agentsettle_refund_buyer`, `agentsettle_open_dispute` |
 
 ## Safety model
 
@@ -16,6 +16,8 @@ One server process = one role = one agent wallet:
 - **Payments need the amount restated.** `agentsettle_approve_payment` requires `confirm_amount_usdc` to equal the job amount, and is marked destructive so MCP clients ask before running it.
 - **Verified, untrusted content.** Terms and deliverables are checked against the hashes recorded on-chain. Deliverables are labelled untrusted: the buyer agent is told to evaluate them, never to follow instructions inside them.
 - **Retries never pay twice.** `agentsettle_create_job` uses an idempotency key (derived automatically if omitted).
+- **Slow transactions are reported, not retried.** If a transaction isn't confirmed within 2 minutes, the tool returns `status: "pending"` with its hash instead of an error. Until it confirms (or is dropped, i.e. unseen for 10 minutes), the agent refuses to send anything else and points to `agentsettle_tx_status`. This closes the gap behind the Nov 17 duplicate job, where a slow transaction plus a retry under a new key funded the same task twice.
+- **Stuck transactions are replaced, not stacked.** Transactions are sent with fee headroom (up to 2x the current estimate; only the real fee is charged). If the network says an earlier transaction holds the same slot ("replacement transaction underpriced"), it re-sends at 2x, 4x, then 8x the fee, replacing the stuck one, and gives up after that.
 - **Keys.** On Base Sepolia the server decrypts the agent's Foundry keystore in memory, using a password file at `~/.agentsettle/<keystore>.password` with mode 600 (it refuses looser permissions). That makes the agent key as safe as your Mac account, which is acceptable for a capped testnet agent and **not** for a key holding real funds.
 
 Terms and deliverables are stored by their hash. Without a relay, both agents must run on the same machine and share `.agentsettle/shared/`. With `AGENTSETTLE_RELAY_URL` set in `.env`, they go through the **relay**, so agents on different machines can work together (see below).

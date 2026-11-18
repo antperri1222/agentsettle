@@ -74,8 +74,8 @@ after(async () => {
 test('each role exposes only its own tools; nothing can move tokens, change policy or export keys', async () => {
   const b = (await buyer.listTools()).tools.map((t) => t.name).sort();
   const p = (await provider.listTools()).tools.map((t) => t.name).sort();
-  assert.deepEqual(b, ['agentsettle_approve_payment', 'agentsettle_create_job', 'agentsettle_get_job', 'agentsettle_list_jobs', 'agentsettle_open_dispute', 'agentsettle_reclaim_expired', 'agentsettle_review_delivery', 'agentsettle_whoami']);
-  assert.deepEqual(p, ['agentsettle_deliver', 'agentsettle_get_job', 'agentsettle_list_jobs', 'agentsettle_open_dispute', 'agentsettle_refund_buyer', 'agentsettle_whoami']);
+  assert.deepEqual(b, ['agentsettle_approve_payment', 'agentsettle_create_job', 'agentsettle_get_job', 'agentsettle_list_jobs', 'agentsettle_open_dispute', 'agentsettle_reclaim_expired', 'agentsettle_review_delivery', 'agentsettle_tx_status', 'agentsettle_whoami']);
+  assert.deepEqual(p, ['agentsettle_deliver', 'agentsettle_get_job', 'agentsettle_list_jobs', 'agentsettle_open_dispute', 'agentsettle_refund_buyer', 'agentsettle_tx_status', 'agentsettle_whoami']);
   for (const t of [...(await buyer.listTools()).tools, ...(await provider.listTools()).tools]) {
     assert.doesNotMatch(t.name, /transfer|export|private|policy|allowance|withdraw/i);
   }
@@ -212,5 +212,44 @@ test('agents on "different machines" (separate storage) complete a job through t
     assert.equal((await call(b2, 'agentsettle_approve_payment', { job_id: id, confirm_amount_usdc: '1' })).isError, false);
   } finally {
     await b2.close(); await p2.close(); relayServer.close();
+  }
+});
+
+test('a slow transaction is reported as pending and blocks a duplicate payment (the Nov 17 incident)', async () => {
+  const pub = localPublicClient(d.rpcUrl);
+  const owner = await AgentSettleClient.connect({ network: NETWORKS.anvil, publicClient: pub, escrowAddress: d.escrow, expectedTokenAddress: d.token, wallet: await devWallet('owner', d.rpcUrl) });
+  const now = (await pub.getBlock()).timestamp;
+  await owner.setPolicy(d.roles.buyerAgent, parseUsdcUnits('2'), parseUsdcUnits('20'), now + 86_400n);
+  await owner.approveSpend(parseUsdcUnits('3'));
+  const b3 = await connect('buyer', { AGENTSETTLE_CONFIRM_TIMEOUT_MS: '1500', AGENTSETTLE_DATA_DIR: join(tmp, 'slow-net') });
+  const nextId = async () => pub.readContract({ address: d.escrow, abi: (await import('../../sdk/artifacts.ts')).agentEscrowAbi, functionName: 'nextId' });
+  try {
+    await pub.request({ method: 'evm_setAutomine' as any, params: [false] as any }); // transactions now wait in the mempool
+    const before = await nextId();
+    const first = await call(b3, 'agentsettle_create_job', { provider: d.roles.providerAgent, amount_usdc: '1', description: 'Slow network job, first attempt', acceptance_criteria: ['x x'], idempotency_key: 'slow-net-first-1' });
+    assert.equal(first.isError, false, JSON.stringify(first.data));
+    assert.equal(first.data.status, 'pending');
+    assert.match(first.data.message, /do NOT retry/);
+    const hash = first.data.tx_hash;
+
+    // The agent (or a person) tries again under a different key, exactly what caused the duplicate on Nov 17.
+    const second = await call(b3, 'agentsettle_create_job', { provider: d.roles.providerAgent, amount_usdc: '1', description: 'Slow network job, retried with new wording', acceptance_criteria: ['x x'], idempotency_key: 'slow-net-second-1' });
+    assert.equal(second.isError, true);
+    assert.equal(second.data.error, 'PreviousTxPending');
+    assert.equal((await call(b3, 'agentsettle_tx_status', { tx_hash: hash })).data.status, 'pending');
+
+    await pub.request({ method: 'evm_mine' as any, params: [] as any });
+    const done = await call(b3, 'agentsettle_tx_status', { tx_hash: hash });
+    assert.equal(done.data.status, 'confirmed');
+    assert.equal(BigInt(done.data.job_id), before + 1n);
+    assert.equal(await nextId(), before + 1n, 'exactly one job was funded');
+
+    await pub.request({ method: 'evm_setAutomine' as any, params: [true] as any });
+    const third = await call(b3, 'agentsettle_create_job', { provider: d.roles.providerAgent, amount_usdc: '1', description: 'After the pending one confirmed', acceptance_criteria: ['x x'], idempotency_key: 'slow-net-third-1' });
+    assert.equal(third.isError, false, JSON.stringify(third.data));
+    assert.equal(third.data.status, 'Funded');
+  } finally {
+    await pub.request({ method: 'evm_setAutomine' as any, params: [true] as any });
+    await b3.close();
   }
 });
