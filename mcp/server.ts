@@ -138,7 +138,22 @@ function fail(e: unknown) {
     code = 'InsufficientAllowance';
     msg = 'The owner\'s USDC allowance to the escrow is too low. The owner must run `npm run owner -- approve <amount>`.';
   }
-  return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ error: code, message: msg, hint: HINTS[code] }, null, 2) }] };
+  // Surface which RPC call failed and the provider's own explanation, so failures are diagnosable from the chat.
+  const diag: Record<string, unknown> = {};
+  for (let cur: any = e; cur; cur = cur.cause) {
+    if (cur.details && !diag.details) diag.details = String(cur.details).slice(0, 500);
+    if (cur.body && !diag.rpc_method) {
+      const b = Array.isArray(cur.body) ? cur.body[0] : cur.body;
+      if (b?.method) { diag.rpc_method = b.method; diag.rpc_params = JSON.stringify(b.params ?? []).slice(0, 600); }
+    }
+    if (cur.code !== undefined && typeof cur.code === 'number' && diag.rpc_code === undefined) diag.rpc_code = cur.code;
+    if (!diag.rpc_method && typeof cur.message === 'string') {
+      const m = cur.message.match(/Request body: (\{.*\})/);
+      if (m) { try { const b = JSON.parse(m[1]); diag.rpc_method = b.method; diag.rpc_params = JSON.stringify(b.params ?? []).slice(0, 600); } catch { /* ignore */ } }
+    }
+  }
+  if (e instanceof Error) log('tool error:', e.message.replace(/(\/v2\/|\/v3\/)[^\s/"]+/g, '$1<redacted>'));
+  return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ error: code, message: msg, hint: HINTS[code], ...(Object.keys(diag).length ? { diagnostics: diag } : {}) }, null, 2) }] };
 }
 
 const ok = (data: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(data, (_k, v) => (typeof v === 'bigint' ? v.toString() : v), 2) }] });
