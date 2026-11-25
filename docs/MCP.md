@@ -6,8 +6,8 @@ One server process = one role = one agent wallet:
 
 | Role | Tools |
 |---|---|
-| **buyer** | `agentsettle_whoami`, `agentsettle_list_jobs`, `agentsettle_get_job`, `agentsettle_tx_status`, `agentsettle_create_job`, `agentsettle_review_delivery`, `agentsettle_approve_payment`, `agentsettle_open_dispute`, `agentsettle_reclaim_expired` |
-| **provider** | `agentsettle_whoami`, `agentsettle_list_jobs`, `agentsettle_get_job`, `agentsettle_tx_status`, `agentsettle_deliver`, `agentsettle_refund_buyer`, `agentsettle_open_dispute` |
+| **buyer** | `agentsettle_whoami`, `agentsettle_list_jobs`, `agentsettle_get_job`, `agentsettle_tx_status`, `agentsettle_create_job`, `agentsettle_review_delivery`, `agentsettle_approve_payment`, `agentsettle_open_dispute`, `agentsettle_add_statement`, `agentsettle_reclaim_expired` |
+| **provider** | `agentsettle_whoami`, `agentsettle_list_jobs`, `agentsettle_get_job`, `agentsettle_tx_status`, `agentsettle_deliver`, `agentsettle_refund_buyer`, `agentsettle_open_dispute`, `agentsettle_add_statement` |
 
 ## Safety model
 
@@ -81,8 +81,8 @@ Watch it happen on the dashboard (`npm run dev` → On-chain).
 Each job names its own **arbiter**, the only address that can settle a dispute on it. It can't be the job's buyer, provider or buyer agent.
 - **Buyer side:** `agentsettle_create_job` takes an optional `arbiter`, defaulting to `AGENTSETTLE_DEFAULT_ARBITER` (or `ARBITER_ADDRESS`) from `.env`. The contract only accepts arbiters the owner has allowlisted for that agent: `npm run owner -- allow-arbiter <address>` (and `disallow-arbiter`). `agentsettle_whoami` shows whether the default arbiter is allowlisted.
 - **Provider side:** `agentsettle_get_job` shows `arbiter` and `arbiter_label` (from the known-arbiter list in `deployments/<network>.json`), and tells the agent to check it before working and decline (refund) if it isn't acceptable.
-- **Disputes:** `agentsettle_open_dispute` records the dispute on-chain and sends the reason to the relay as a signed statement. Only the job's parties can read statements, and `get_job` shows both sides' statements once a job is disputed.
-- **The arbiter** (a person) runs `npm run arbiter` to list jobs naming them, `npm run arbiter -- show <id>` to read the terms, the deliverable (both checked against on-chain hashes) and both statements, and `npm run arbiter -- resolve <id> pay|refund` to settle. It asks you to retype the decision. It signs with the `agentsettle-arbiter` keystore.
+- **Disputes:** `agentsettle_open_dispute` records the dispute on-chain and sends the reason to the relay as a signed statement. Only the job's parties can read statements, and `get_job` shows both sides' statements once a job is disputed. Either side can answer with `agentsettle_add_statement` while the job is disputed.
+- **The arbiter** (a person) runs `npm run arbiter` to list jobs naming them (no password needed when `ARBITER_ADDRESS` is in `.env`), `npm run arbiter -- show <id>` to read the terms, the deliverable (both checked against on-chain hashes) and both statements, and `npm run arbiter -- resolve <id> pay|refund` to settle. It asks you to retype the decision. It signs with the `agentsettle-arbiter` keystore.
 
 ## Bringing in an outside provider
 

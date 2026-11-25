@@ -75,8 +75,8 @@ after(async () => {
 test('each role exposes only its own tools; nothing can move tokens, change policy or export keys', async () => {
   const b = (await buyer.listTools()).tools.map((t) => t.name).sort();
   const p = (await provider.listTools()).tools.map((t) => t.name).sort();
-  assert.deepEqual(b, ['agentsettle_approve_payment', 'agentsettle_create_job', 'agentsettle_get_job', 'agentsettle_list_jobs', 'agentsettle_open_dispute', 'agentsettle_reclaim_expired', 'agentsettle_review_delivery', 'agentsettle_tx_status', 'agentsettle_whoami']);
-  assert.deepEqual(p, ['agentsettle_deliver', 'agentsettle_get_job', 'agentsettle_list_jobs', 'agentsettle_open_dispute', 'agentsettle_refund_buyer', 'agentsettle_tx_status', 'agentsettle_whoami']);
+  assert.deepEqual(b, ['agentsettle_add_statement', 'agentsettle_approve_payment', 'agentsettle_create_job', 'agentsettle_get_job', 'agentsettle_list_jobs', 'agentsettle_open_dispute', 'agentsettle_reclaim_expired', 'agentsettle_review_delivery', 'agentsettle_tx_status', 'agentsettle_whoami']);
+  assert.deepEqual(p, ['agentsettle_add_statement', 'agentsettle_deliver', 'agentsettle_get_job', 'agentsettle_list_jobs', 'agentsettle_open_dispute', 'agentsettle_refund_buyer', 'agentsettle_tx_status', 'agentsettle_whoami']);
   for (const t of [...(await buyer.listTools()).tools, ...(await provider.listTools()).tools]) {
     assert.doesNotMatch(t.name, /transfer|export|private|policy|allowance|withdraw/i);
   }
@@ -189,6 +189,8 @@ test('dispute path through MCP freezes the job for the arbiter; the provider can
   assert.match(view.data.next_actions[0], /^wait for the arbiter \(0x/);
   const refundAfterDispute = await call(provider, 'agentsettle_refund_buyer', { job_id: id });
   assert.equal(refundAfterDispute.data.error, 'InvalidState');
+  const noRelay = await call(provider, 'agentsettle_add_statement', { job_id: id, statement: 'The work covered what was asked.' });
+  assert.equal(noRelay.data.error, 'NoRelay', 'without a relay the statement could never reach the arbiter, so say so');
 });
 
 test('keystore + password-file loading (Base Sepolia path) matches cast and refuses loose permissions', () => {
@@ -231,6 +233,21 @@ test('agents on "different machines" (separate storage) complete a job through t
     assert.equal(review.data.deliverable, 'hello from machine B');
     assert.equal(review.data.deliverable_verified_against_chain, true);
     assert.equal((await call(b2, 'agentsettle_approve_payment', { job_id: id, confirm_amount_usdc: '1' })).isError, false);
+
+    // A dispute across machines: the buyer's reason and the provider's answer both reach the arbiter via the relay.
+    const c2 = await call(b2, 'agentsettle_create_job', { provider: d.roles.providerAgent, amount_usdc: '1', description: 'Second cross-machine job', acceptance_criteria: ['Says goodbye'], idempotency_key: 'relay-job-00002' });
+    const id2 = Number(c2.data.job_id);
+    await call(p2, 'agentsettle_deliver', { job_id: id2, content: 'hello again' });
+    const early = await call(p2, 'agentsettle_add_statement', { job_id: id2, statement: 'Nothing to dispute yet, this should be refused.' });
+    assert.equal(early.data.error, 'InvalidState');
+    const disp = await call(b2, 'agentsettle_open_dispute', { job_id: id2, reason: 'It says hello, not goodbye.' });
+    assert.equal(disp.data.reason_shared, 'sent to the relay for the arbiter');
+    const answer = await call(p2, 'agentsettle_add_statement', { job_id: id2, statement: 'The terms were ambiguous; hello is a greeting too.' });
+    assert.equal(answer.isError, false, JSON.stringify(answer.data));
+    assert.equal(answer.data.statements.length, 2);
+    const both = await call(b2, 'agentsettle_get_job', { job_id: id2 });
+    assert.deepEqual(both.data.dispute_statements.map((x: any) => x.text), ['It says hello, not goodbye.', 'The terms were ambiguous; hello is a greeting too.']);
+    assert.match(both.data.next_actions[1], /agentsettle_add_statement/);
   } finally {
     await b2.close(); await p2.close(); relayServer.close();
   }

@@ -279,7 +279,7 @@ async function nowTs(): Promise<bigint> {
 function nextActions(j: Job, now: bigint): string[] {
   const late = now > j.deadline;
   if (j.status === 'Paid' || j.status === 'Refunded') return ['none: settled'];
-  if (j.status === 'Disputed') return [`wait for the arbiter (${j.arbiter}) to resolve the dispute`];
+  if (j.status === 'Disputed') return [`wait for the arbiter (${j.arbiter}) to resolve the dispute`, 'agentsettle_add_statement (to give the arbiter your side)'];
   if (role === 'buyer') {
     if (j.status === 'Funded') return late ? ['agentsettle_reclaim_expired', 'agentsettle_open_dispute'] : ['wait for delivery', 'agentsettle_open_dispute'];
     return ['agentsettle_review_delivery', 'agentsettle_approve_payment (if acceptance criteria are met)', 'agentsettle_open_dispute (if not)'];
@@ -470,12 +470,28 @@ server.registerTool('agentsettle_open_dispute', {
     // Share the reason with the arbiter (and the other side) through the relay; the dispute itself is already on-chain.
     let reason_shared: string;
     if (relay) {
-      try { await relay.putStatement(BigInt(job_id), `[${role} ${me}] ${reason}`); reason_shared = 'sent to the relay for the arbiter'; }
+      try { await relay.putStatement(BigInt(job_id), reason); reason_shared = 'sent to the relay for the arbiter'; }
       catch (e) { reason_shared = `not shared (relay error: ${(e as Error).message}); tell the arbiter directly`; }
     } else reason_shared = 'saved locally only (no relay configured)';
     return ok({ job_id, status: 'Disputed', arbiter: j.arbiter, arbiter_label: arbiterLabel(j.arbiter), reason_shared, note: 'The job\'s arbiter now decides the outcome.', ...tx(r) });
   } catch (e) { return fail(e); }
 }));
+
+server.registerTool('agentsettle_add_statement', {
+  title: 'Add your side to a dispute',
+  description: 'Sends a short statement to the arbiter of a DISPUTED job you are a party to (e.g. the provider answering the buyer\'s dispute reason). It is signed by your wallet, stored on the relay, and readable only by the job\'s parties. Stick to verifiable facts about the terms and the deliverable.',
+  inputSchema: { job_id: jobId, statement: z.string().min(10).max(4000).describe('Your factual statement for the arbiter') },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+}, async ({ job_id, statement }) => {
+  try {
+    const j = await loadJob(job_id);
+    if (!isMine(j)) throw new AgentSettleError('Forbidden', 'You are not a party to this job');
+    if (j.status !== 'Disputed') throw new AgentSettleError('InvalidState', `Job ${job_id} is ${j.status}; statements are for disputed jobs`);
+    if (!relay) throw new AgentSettleError('NoRelay', 'No relay is configured, so statements cannot reach the arbiter (set AGENTSETTLE_RELAY_URL)');
+    await relay.putStatement(BigInt(job_id), statement);
+    return ok({ job_id, sent: true, arbiter: j.arbiter, arbiter_label: arbiterLabel(j.arbiter), statements: await relay.getStatements(BigInt(job_id)) });
+  } catch (e) { return fail(e); }
+});
 
 if (role === 'buyer') {
   server.registerTool('agentsettle_create_job', {

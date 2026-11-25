@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { createPublicClient, createWalletClient, getAddress, http, type Account, type Address, type Chain, type PublicClient } from 'viem';
+import { createPublicClient, createWalletClient, getAddress, http, isAddress, type Account, type Address, type Chain, type PublicClient } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { agentEscrowAbi } from '../sdk/artifacts.ts';
 import { AgentSettleClient, AgentSettleError, type Job } from '../sdk/client.ts';
@@ -36,7 +36,11 @@ if (network.name === 'anvil') {
   rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || network.defaultRpcUrl; chain = baseSepolia;
   if (!process.env.ESCROW_ADDRESS) throw new Error('ESCROW_ADDRESS is not set (see .env)');
   escrow = getAddress(process.env.ESCROW_ADDRESS);
-  account = loadKeystoreAccount(process.env.ARBITER_KEYSTORE || 'agentsettle-arbiter');
+  // Listing only needs the arbiter's address (public); reading content and settling need the key.
+  const known = process.env.ARBITER_ADDRESS;
+  account = cmd === 'list' && known && isAddress(known)
+    ? ({ address: getAddress(known), type: 'json-rpc' } as Account)
+    : loadKeystoreAccount(process.env.ARBITER_KEYSTORE || 'agentsettle-arbiter');
 }
 sharedDir = process.env.AGENTSETTLE_DATA_DIR || join(REPO, '.agentsettle', 'shared', `${network.name}-${escrow.toLowerCase()}`);
 const me = account.address;
