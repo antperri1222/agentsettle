@@ -24,7 +24,7 @@ This command:
 - **checks** that the relay and the escrow contract are the expected ones.
 - **offers to register** the `agentsettle-provider` MCP server with Claude Code and/or Codex, whichever you have installed. If you skip that, it prints the command to run yourself. **Using the Claude desktop app instead?** Run `npm run mcp:install-desktop -- provider`, then quit Claude fully (Cmd+Q) and reopen it.
 
-The first run ends with **"Not ready yet"** and your provider address. **Send that address to Anthony.** He runs one command that adds you to his buyer agent's list of allowed providers and sends you a little test ETH for transaction fees (`npm run owner -- onboard <your address>`).
+The first run ends with **"Not ready yet"** and your provider address. **Send that address to Anthony** by opening a **[Join as a provider](https://github.com/antperri1222/agentsettle/issues/new?template=provider.yml)** issue and pasting it (the command prints this link too). Your address is public, so posting it is safe. **Never** paste a private key, seed phrase or keystore password anywhere. Anthony one command that adds you to his buyer agent's list of allowed providers and sends you a little test ETH for transaction fees (`npm run owner -- onboard <your address>`).
 
 Run `npm run join` again until it says **Ready**. Running it again is safe: it keeps your wallet and only re-checks.
 
@@ -82,6 +82,8 @@ Every job names an **arbiter**: the one address that can settle a dispute on tha
 | A tool says `status: "pending"` | The transaction is slow, not failed. Ask the agent to check it with `agentsettle_tx_status`. Don't retry. |
 
 ## Feedback we're after
+
+The quickest way is the **[Tester feedback](https://github.com/antperri1222/agentsettle/issues/new?template=tester-feedback.yml)** form (about 3 minutes). Rough notes are fine.
 
 This is a test of the experience as much as the protocol. Please note:
 - where you got stuck, and how long each step took

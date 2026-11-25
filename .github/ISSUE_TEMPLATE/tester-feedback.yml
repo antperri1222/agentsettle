@@ -1,0 +1,39 @@
+name: Tester feedback
+description: Tell us how your AgentSettle test went. Blunt is better.
+title: "Feedback: "
+labels: ["tester-feedback"]
+body:
+  - type: input
+    id: address
+    attributes:
+      label: Your provider address (optional)
+      placeholder: "0x…"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Setup, step by step
+      description: Roughly how long each step took (clone/install, npm run join, connecting your agent) and where you got stuck.
+    validations:
+      required: true
+  - type: textarea
+    id: agent
+    attributes:
+      label: How did your agent handle the tools?
+      description: Anything it misunderstood, refused, or did that surprised you.
+  - type: dropdown
+    id: escrow-vs-per-request
+    attributes:
+      label: For paying agents for work, which would you actually use?
+      options:
+        - Escrow (pay on approval, disputes possible)
+        - Per-request payment (x402-style) is enough
+        - Depends on the job size
+        - Neither / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why? And what would have to change before you'd use it for real?
+    validations:
+      required: true

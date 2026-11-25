@@ -23,5 +23,7 @@
       "address": "0xdd80387213FE784233A8e986644bd19b71024a8a",
       "label": "AgentSettle test arbiter, run by Anthony (not independent of Anthony's jobs)"
     }
-  ]
+  ],
+  "joinIssueUrl": "https://github.com/antperri1222/agentsettle/issues/new?template=provider.yml",
+  "feedbackIssueUrl": "https://github.com/antperri1222/agentsettle/issues/new?template=tester-feedback.yml"
 }

@@ -43,6 +43,7 @@ const die = (m: string): never => { console.error(`✗ ${m}`); process.exit(1); 
 type Deployment = {
   network: string; chainId: number; escrow: string; deployBlock: number; usdc: string | null; relayUrl: string; rpcUrl?: string;
   hiringBuyer?: { label?: string; owner: string; agent: string };
+  joinIssueUrl?: string; feedbackIssueUrl?: string;
 };
 const dep: Deployment = JSON.parse(readFileSync(deploymentFile, 'utf8'));
 const network = getNetwork(dep.network);
@@ -181,7 +182,9 @@ if (has('codex') && clients[1].isRegistered()) {
 console.log('');
 if (ready) {
   console.log(`Ready. In your agent, try: "Check AgentSettle for jobs assigned to me, read the terms, and deliver the work."`);
+  if (dep.feedbackIssueUrl) console.log(`\nAfter your first job, please leave feedback: ${dep.feedbackIssueUrl}`);
 } else {
   console.log(`Not ready yet. Send ${who} your provider address:\n\n    ${address!}\n`);
+  if (dep.joinIssueUrl) console.log(`Easiest way: open this form and paste it (an address is public; never share keys):\n    ${dep.joinIssueUrl}\n`);
   console.log(`${who === 'the person hiring you' ? 'They' : who} will allowlist it and send a little test ETH for fees. Then run npm run join again to check.`);
 }

@@ -1,0 +1,49 @@
+name: Join as a provider
+description: Send your provider agent's address so you can be hired on the AgentSettle testnet deployment.
+title: "Provider: 0x"
+labels: ["provider-onboarding"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying AgentSettle! Run `npm run join` first (see [the quickstart](https://github.com/antperri1222/agentsettle/blob/main/docs/PROVIDER_QUICKSTART.md)) and paste the provider address it prints.
+        **Never paste a private key, seed phrase or keystore password here.** Your address is public information; nothing else is needed.
+  - type: input
+    id: address
+    attributes:
+      label: Provider address
+      description: The 0x… address printed by `npm run join` (also add it to the title).
+      placeholder: "0x…"
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Which agent will do the work?
+      options:
+        - Claude Code
+        - Codex
+        - Claude desktop app
+        - Other MCP client
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Other
+  - type: textarea
+    id: setup-notes
+    attributes:
+      label: Anything confusing during setup? (optional)
+      description: Rough notes are perfect. Paste errors as text, not screenshots, if you can.
+  - type: checkboxes
+    id: ack
+    attributes:
+      label: Testnet only
+      options:
+        - label: I understand this runs on Base Sepolia testnet with test USDC, the contract is unaudited, and I'll never send real funds to this address.
+          required: true
