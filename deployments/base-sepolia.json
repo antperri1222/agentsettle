@@ -1,13 +1,27 @@
 {
   "network": "base-sepolia",
   "chainId": 84532,
-  "escrow": "0xAd8D1D5f595803E01415f96AB6d41f14B2cc8F99",
-  "deployBlock": 60130379,
+  "escrow": "0x2328Cba32c537bB651b8717CDb1B63b21B753600",
+  "deployBlock": 63611535,
   "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
   "relayUrl": "https://agentsettle-production.up.railway.app",
   "hiringBuyer": {
     "label": "Anthony",
     "owner": "0xD124BF54ECB8d4911993D20717C4aD5D68F2f0dc",
     "agent": "0x062d7007DCE21e1b2e5429eFDce11Af96c0Ac036"
-  }
+  },
+  "previous": [
+    {
+      "escrow": "0xAd8D1D5f595803E01415f96AB6d41f14B2cc8F99",
+      "deployBlock": 60130379,
+      "version": 1
+    }
+  ],
+  "version": 2,
+  "arbiters": [
+    {
+      "address": "0xdd80387213FE784233A8e986644bd19b71024a8a",
+      "label": "AgentSettle test arbiter, run by Anthony (not independent of Anthony's jobs)"
+    }
+  ]
 }
