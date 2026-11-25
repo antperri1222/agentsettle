@@ -18,7 +18,9 @@ import { devAccount, localChain } from '../sdk/local.ts';
 import { getNetwork } from '../sdk/networks.ts';
 import { RelayClient } from '../sdk/relay.ts';
 import { formatUsdcUnits, hashEvidence } from '../sdk/terms.ts';
+import { assertEnvMatchesFile } from '../sdk/env-guard.ts';
 
+try { assertEnvMatchesFile(new URL('../.env', import.meta.url).pathname); } catch (e) { console.error(`✗ ${(e as Error).message}`); process.exit(1); }
 const args = process.argv.slice(2);
 const yes = args.includes('--yes');
 const [cmd = 'list', idArg, decision] = args.filter((a) => a !== '--yes');

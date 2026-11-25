@@ -19,7 +19,9 @@ import { loadKeystoreAccount } from '../sdk/keystore.ts';
 import { devAccount, localChain } from '../sdk/local.ts';
 import { getNetwork } from '../sdk/networks.ts';
 import { formatUsdcUnits, parseUsdcUnits } from '../sdk/terms.ts';
+import { assertEnvMatchesFile } from '../sdk/env-guard.ts';
 
+try { assertEnvMatchesFile(new URL('../.env', import.meta.url).pathname); } catch (e) { console.error(`✗ ${(e as Error).message}`); process.exit(1); }
 const [cmd, ...args] = process.argv.slice(2);
 const LOCAL_FILE = process.env.AGENTSETTLE_LOCAL_FILE || new URL('../.agentsettle/local.json', import.meta.url);
 const network = getNetwork(process.env.AGENTSETTLE_NETWORK || 'anvil');

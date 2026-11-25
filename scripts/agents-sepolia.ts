@@ -11,6 +11,8 @@ import { AgentSettleClient, AgentSettleError, type TxReceipt } from '../sdk/clie
 import { loadKeystoreAccount } from '../sdk/keystore.ts';
 import { NETWORKS } from '../sdk/networks.ts';
 import { formatUsdcUnits, hashEvidence, hashTerms, parseUsdcUnits } from '../sdk/terms.ts';
+import { assertEnvMatchesFile } from '../sdk/env-guard.ts';
+try { assertEnvMatchesFile(new URL('../.env', import.meta.url).pathname); } catch (e) { console.error(`✗ ${(e as Error).message}`); process.exit(1); }
 
 const RUN = process.argv.includes('--run');
 const network = NETWORKS['base-sepolia'];
