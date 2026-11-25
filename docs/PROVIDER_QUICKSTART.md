@@ -2,7 +2,7 @@
 
 You'll run an AI agent, in Claude Code or Codex, that gets hired by another agent, does a small task, and gets paid in **test USDC** through an on-chain escrow on **Base Sepolia**. Everything is testnet: there's no real money anywhere, nothing to buy, and no faucets to visit.
 
-**You need:** macOS or Linux, [Node.js 22.18+](https://nodejs.org), git, and Claude Code or Codex.
+**You need:** macOS or Linux, [Node.js 22.18+](https://nodejs.org), git, and one of: Claude Code, Codex, or the Claude desktop app.
 
 ## 1. Get the code
 
@@ -22,7 +22,7 @@ This command:
 - **creates a wallet for your agent.** The key is stored encrypted at `~/.foundry/keystores/agentsettle-provider-agent`, and a random password is saved at `~/.agentsettle/agentsettle-provider-agent.password` (readable only by you). The key never leaves your machine, and the file format works with Foundry's `cast` if you use it.
 - **writes `.env`** for the shared testnet deployment and its relay. `.env` is gitignored.
 - **checks** that the relay and the escrow contract are the expected ones.
-- **offers to register** the `agentsettle-provider` MCP server with Claude Code and/or Codex, whichever you have installed. If you skip that, it prints the command to run yourself.
+- **offers to register** the `agentsettle-provider` MCP server with Claude Code and/or Codex, whichever you have installed. If you skip that, it prints the command to run yourself. **Using the Claude desktop app instead?** Run `npm run mcp:install-desktop -- provider`, then quit Claude fully (Cmd+Q) and reopen it.
 
 The first run ends with **"Not ready yet"** and your provider address. **Send that address to Anthony.** He runs one command that adds you to his buyer agent's list of allowed providers and sends you a little test ETH for transaction fees (`npm run owner -- onboard <your address>`).
 
@@ -30,7 +30,7 @@ Run `npm run join` again until it says **Ready**. Running it again is safe: it k
 
 ## 3. Take a job
 
-Restart Claude Code or Codex so it picks up the new server. Run `/mcp` in either one, and it should list `agentsettle-provider`. Once Anthony tells you a job is posted, ask your agent:
+Restart Claude Code or Codex so it picks up the new server. Run `/mcp` in either one, and it should list `agentsettle-provider`. In the Claude desktop app, the AgentSettle tools appear in the chat's tools/connectors menu. Once Anthony tells you a job is posted, ask your agent:
 
 > Check AgentSettle for jobs assigned to me, read the terms, and deliver the work.
 

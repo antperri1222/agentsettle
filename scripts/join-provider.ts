@@ -157,6 +157,7 @@ for (const c of clients) {
   }
   if (!done) console.log(`  ${label}${show(c.add)}`);
 }
+if (process.platform === 'darwin' || process.platform === 'win32') console.log(`  Claude app:  npm run mcp:install-desktop -- provider   (then quit Claude fully and reopen it)`);
 
 // Codex: ask before any transaction (deliver/refund/dispute; read-only tools run freely) and allow a slower start.
 // Codex validates its config on load, so the edit is checked with `codex mcp get` and rolled back if rejected.

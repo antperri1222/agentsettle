@@ -1,7 +1,8 @@
-// Adds the AgentSettle buyer and provider MCP servers to Claude Desktop's config, safely:
+// Adds AgentSettle MCP servers to Claude Desktop's config, safely:
 // backs up the existing file, keeps every other setting and server, refuses to touch a file it cannot parse.
 //
-//   npm run mcp:install-desktop
+//   npm run mcp:install-desktop               buyer and provider (the owner's machine)
+//   npm run mcp:install-desktop -- provider   provider only (a machine set up with npm run join)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -16,6 +17,11 @@ const configPath = process.env.CLAUDE_DESKTOP_CONFIG
       ? join(process.env.APPDATA ?? homedir(), 'Claude', 'claude_desktop_config.json')
       : join(homedir(), '.config', 'Claude', 'claude_desktop_config.json'));
 
+const roles = process.argv.slice(2).length ? process.argv.slice(2) : ['buyer', 'provider'];
+if (!roles.every((r) => r === 'buyer' || r === 'provider')) {
+  console.error('Usage: npm run mcp:install-desktop [-- buyer|provider]');
+  process.exit(1);
+}
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major < 22 || (major === 22 && minor < 18)) {
   console.error(`✗ Node ${process.versions.node} is too old; the MCP server needs Node 22.18 or newer.`);
@@ -50,15 +56,15 @@ if (nodePath.includes('/Cellar/')) {
 }
 
 config.mcpServers ??= {};
-for (const role of ['buyer', 'provider']) {
+for (const role of roles) {
   config.mcpServers[`agentsettle-${role}`] = { command: nodePath, args: [serverPath], env: { AGENTSETTLE_ROLE: role } };
 }
 writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-console.log(`✓ Added agentsettle-buyer and agentsettle-provider to:\n  ${configPath}`);
+console.log(`✓ Added ${roles.map((r) => `agentsettle-${r}`).join(' and ')} to:\n  ${configPath}`);
 console.log(`  (node: ${nodePath})`);
 
 if ((process.env.AGENTSETTLE_NETWORK || '') === 'base-sepolia') {
-  for (const role of ['buyer', 'provider']) {
+  for (const role of roles) {
     const pw = join(homedir(), '.agentsettle', `agentsettle-${role}-agent.password`);
     if (!existsSync(pw)) console.warn(`⚠ ${pw} is missing; run: npm run mcp:setup -- ${role}`);
   }
