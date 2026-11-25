@@ -321,7 +321,7 @@ const MOVES_FUNDS = { readOnlyHint: false, destructiveHint: true, idempotentHint
 
 server.registerTool('agentsettle_whoami', {
   title: 'Show my agent wallet, network and spending limits',
-  description: 'Shows this agent\'s role, wallet, gas balance and the network. For buyers, also shows the owner\'s USDC balance, the allowance this agent can draw on, and the on-chain spend policy (per-job cap, daily cap, spent today, expiry). Pass a provider address to check whether it is allowlisted.',
+  description: 'Shows this agent\'s role, wallet, gas balance and the network. For providers, also shows the USDC this wallet has been paid. For buyers, also shows the owner\'s USDC balance, the allowance this agent can draw on, and the on-chain spend policy (per-job cap, daily cap, spent today, expiry). Pass a provider address to check whether it is allowlisted.',
   inputSchema: { provider: z.string().optional().describe('Optional provider address to check against the allowlist') },
   annotations: READ,
 }, async ({ provider }) => {
@@ -330,8 +330,13 @@ server.registerTool('agentsettle_whoami', {
     const out: Record<string, unknown> = {
       role, wallet: me, wallet_eth_for_gas: formatEther(await publicClient.getBalance({ address: me })),
       network: network.label, chain_id: network.chainId, escrow: escrowAddress, escrow_explorer: explorerAddress(network, escrowAddress),
-      settlement_token: client.token, testnet_only: true,
+      settlement_token: client.token,
+      settlement_token_check: network.usdcAddress
+        ? 'verified at startup: the escrow pays in the official Circle test-USDC address configured for this network'
+        : 'local test token deployed for this chain',
+      testnet_only: true,
     };
+    if (role === 'provider') out.wallet_usdc_balance = formatUsdcUnits(await client.tokenBalance(me)); // what you've been paid
     if (role === 'buyer' && owner) {
       const [perJobCap, dailyCap, expiresAt, active] = await publicClient.readContract({ address: escrowAddress, abi: agentEscrowAbi, functionName: 'policies', args: [owner, me] });
       const spent = await publicClient.readContract({ address: escrowAddress, abi: agentEscrowAbi, functionName: 'spentPerDay', args: [owner, me, now / 86400n] });

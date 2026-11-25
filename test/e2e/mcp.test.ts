@@ -138,6 +138,9 @@ test('full agent-to-agent job through MCP: create → find → deliver → verif
   assert.equal(again.data.error, 'InvalidState');
   const final = await call(provider, 'agentsettle_get_job', { job_id: id });
   assert.equal(final.data.status, 'Paid');
+  const pw = await call(provider, 'agentsettle_whoami', {});
+  assert.ok(Number(pw.data.wallet_usdc_balance) >= 1.4925, `provider sees its payout: ${pw.data.wallet_usdc_balance}`);
+  assert.match(pw.data.settlement_token_check, /local test token|verified at startup/);
 });
 
 test('on-chain limits surface as clear errors: per-job cap, allowlist, daily cap', async () => {
