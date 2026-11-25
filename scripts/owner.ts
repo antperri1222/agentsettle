@@ -6,7 +6,7 @@
 //   npm run owner -- allow <providerAddress>             add a provider to the agent's allowlist
 //   npm run owner -- disallow <providerAddress>
 //   npm run owner -- revoke                              stop the agent from funding new jobs immediately
-//   npm run owner -- onboard <providerAddress> [eth]     allowlist a new provider and top up its gas (default 0.0005 ETH)
+//   npm run owner -- onboard <providerAddress> [eth]     allowlist a new provider and top up its gas (default 0.0001 ETH)
 import { readFileSync } from 'node:fs';
 import { createPublicClient, createWalletClient, formatEther, getAddress, http, isAddress, parseEther, type Address, type Chain, type PublicClient } from 'viem';
 import { baseSepolia } from 'viem/chains';
@@ -91,7 +91,7 @@ try {
     case 'allow': show(await (await signer()).setProviderAllowed(agent, addr(args[0]), true)); await status(); break;
     case 'disallow': show(await (await signer()).setProviderAllowed(agent, addr(args[0]), false)); await status(); break;
     case 'revoke': show(await (await signer()).revokePolicy(agent)); await status(); break;
-    case 'onboard': await onboard(addr(args[0]), args[1] ?? '0.0005'); break;
+    case 'onboard': await onboard(addr(args[0]), args[1] ?? '0.0001'); break;
     default:
       console.log('Usage: npm run owner -- status | approve <usdc> | policy <perJob> <daily> <days> | allow <addr> | disallow <addr> | revoke | onboard <addr> [eth]');
       process.exitCode = cmd ? 1 : 0;

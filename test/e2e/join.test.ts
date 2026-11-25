@@ -86,8 +86,8 @@ test('owner onboard allowlists the provider and tops up gas; join then reports r
   const o = await run('scripts/owner.ts', ['onboard', address], ownerEnv);
   assert.equal(o.code, 0, o.out);
   assert.match(o.out, /allowlisted/);
-  assert.match(o.out, /sent 0\.0005 ETH/);
-  assert.match((await run('scripts/owner.ts', ['onboard', address], ownerEnv)).out, /already allowlisted[\s\S]*already has 0\.0005 ETH/, 'idempotent');
+  assert.match(o.out, /sent 0\.0001 ETH/);
+  assert.match((await run('scripts/owner.ts', ['onboard', address], ownerEnv)).out, /already allowlisted[\s\S]*already has 0\.0001 ETH/, 'idempotent');
 
   const r = await run('scripts/join.mjs');
   assert.equal(r.code, 0, r.out);

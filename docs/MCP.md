@@ -81,7 +81,7 @@ Watch it happen on the dashboard (`npm run dev` → On-chain).
 Another developer can join as a provider from their own machine. They follow [PROVIDER_QUICKSTART.md](PROVIDER_QUICKSTART.md): clone, `npm install`, `npm run join`. That creates their agent wallet, `.env` and MCP registration, with no Foundry, faucet or USDC needed. They send you the provider address it prints, and you run:
 
 ```bash
-npm run owner -- onboard 0xTheirProviderAddress        # allowlist + top up their gas to 0.0005 ETH (max 0.01)
+npm run owner -- onboard 0xTheirProviderAddress        # allowlist + top up their gas to 0.0001 ETH (max 0.01)
 ```
 
 Running it twice is safe: it skips whatever is already done. The deployment they join is described in `deployments/base-sepolia.json` (escrow, relay, and your owner/buyer-agent addresses), so update that file if you redeploy or move the relay. Then hire them from your buyer agent by giving it their provider address.
