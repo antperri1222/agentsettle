@@ -8,8 +8,11 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 /**
  * @title AgentEscrow
  * @notice Testnet research prototype: buyer-funded escrow for agent-delivered work.
- * @dev NOT AUDITED. No admin keys, no upgradeability, no pause. A single immutable arbiter resolves disputes;
- *      this is a deliberate MVP trust assumption (see docs/THREAT_MODEL.md).
+ * @dev NOT AUDITED. No admin keys, no upgradeability, no pause.
+ *      v2: every job names its own arbiter, fixed at creation, so disputes can be settled by a third party both sides
+ *      can see before any work starts (the provider can decline a job by refunding it). The arbiter can never be the
+ *      buyer, the buyer's agent or the provider. Agents may only name arbiters their owner has allowlisted.
+ *      Trust assumption: a named arbiter that never acts leaves a disputed job frozen (see docs/THREAT_MODEL.md).
  *      Use only a non-fee-on-transfer six-decimal USDC-compatible token.
  *
  *      Two ways to fund a job:
@@ -39,6 +42,7 @@ contract AgentEscrow is ReentrancyGuard {
         Status status;
         address provider;
         address agent; // optional delegated key that may act for the buyer (approve / dispute / refundExpired)
+        address arbiter; // the only address that can resolve a dispute on this job
         uint256 amount; // token base units (6 decimals for USDC)
         bytes32 termsHash;
         bytes32 evidenceHash;
@@ -55,10 +59,10 @@ contract AgentEscrow is ReentrancyGuard {
 
     uint64 public constant MAX_DURATION = 90 days;
     uint16 public constant MAX_FEE_BPS = 1000; // 10%
+    uint8 public constant VERSION = 2;
 
     IERC20 public immutable usdc;
     address public immutable treasury;
-    address public immutable arbiter;
     uint16 public immutable feeBps;
 
     uint256 public nextId;
@@ -70,6 +74,8 @@ contract AgentEscrow is ReentrancyGuard {
     mapping(address => mapping(address => SpendPolicy)) public policies;
     /// @notice owner => agent => provider => allowed
     mapping(address => mapping(address => mapping(address => bool))) public providerAllowed;
+    /// @notice owner => agent => arbiter => allowed
+    mapping(address => mapping(address => mapping(address => bool))) public arbiterAllowed;
     /// @notice owner => agent => utc day index => amount authorised that day (refunds do not restore budget)
     mapping(address => mapping(address => mapping(uint256 => uint256))) public spentPerDay;
 
@@ -85,6 +91,7 @@ contract AgentEscrow is ReentrancyGuard {
     error DuplicateClientRef();
     error PolicyInactive();
     error ProviderNotAllowed();
+    error ArbiterNotAllowed();
     error PerJobCapExceeded();
     error DailyCapExceeded();
 
@@ -93,6 +100,7 @@ contract AgentEscrow is ReentrancyGuard {
         address indexed buyer,
         address indexed provider,
         address agent,
+        address arbiter,
         uint256 amount,
         uint64 deadline,
         bytes32 termsHash,
@@ -107,14 +115,14 @@ contract AgentEscrow is ReentrancyGuard {
     );
     event PolicyRevoked(address indexed owner, address indexed agent);
     event ProviderAllowlistSet(address indexed owner, address indexed agent, address indexed provider, bool allowed);
+    event ArbiterAllowlistSet(address indexed owner, address indexed agent, address indexed arbiter, bool allowed);
 
-    constructor(address usdc_, address treasury_, address arbiter_, uint16 feeBps_) {
-        if (usdc_ == address(0) || treasury_ == address(0) || arbiter_ == address(0)) revert InvalidAddress();
+    constructor(address usdc_, address treasury_, uint16 feeBps_) {
+        if (usdc_ == address(0) || treasury_ == address(0)) revert InvalidAddress();
         if (usdc_.code.length == 0) revert InvalidAddress();
         if (feeBps_ > MAX_FEE_BPS) revert InvalidAmount();
         usdc = IERC20(usdc_);
         treasury = treasury_;
-        arbiter = arbiter_;
         feeBps = feeBps_;
     }
 
@@ -137,7 +145,7 @@ contract AgentEscrow is ReentrancyGuard {
 
     /// @notice Owner authorises `agent` to fund escrows from the owner's token allowance within limits.
     function setPolicy(address agent, uint128 perJobCap, uint128 dailyCap, uint64 expiresAt) external {
-        if (agent == address(0) || agent == msg.sender || agent == arbiter) revert InvalidAddress();
+        if (agent == address(0) || agent == msg.sender) revert InvalidAddress();
         if (perJobCap == 0 || dailyCap < perJobCap) revert InvalidAmount();
         if (expiresAt <= block.timestamp) revert InvalidDeadline();
         policies[msg.sender][agent] = SpendPolicy(perJobCap, dailyCap, expiresAt, true);
@@ -156,20 +164,31 @@ contract AgentEscrow is ReentrancyGuard {
         emit ProviderAllowlistSet(msg.sender, agent, provider, allowed);
     }
 
+    /// @notice Which arbiters `agent` may name on jobs it funds from the caller's allowance.
+    function setArbiterAllowed(address agent, address arbiter, bool allowed) external {
+        if (arbiter == address(0) || arbiter == msg.sender || arbiter == agent) revert InvalidAddress();
+        arbiterAllowed[msg.sender][agent][arbiter] = allowed;
+        emit ArbiterAllowlistSet(msg.sender, agent, arbiter, allowed);
+    }
+
     // ─────────────────────────── funding ───────────────────────────
 
-    function createJob(address provider, uint256 amount, uint64 deadline, bytes32 termsHash, bytes32 clientRef)
-        external
-        nonReentrant
-        returns (uint256 id)
-    {
-        id = _create(msg.sender, address(0), provider, amount, deadline, termsHash, clientRef);
+    function createJob(
+        address provider,
+        address arbiter,
+        uint256 amount,
+        uint64 deadline,
+        bytes32 termsHash,
+        bytes32 clientRef
+    ) external nonReentrant returns (uint256 id) {
+        id = _create(msg.sender, address(0), provider, arbiter, amount, deadline, termsHash, clientRef);
     }
 
     /// @notice Called by an agent key; funds are pulled from `owner`, who must have set a policy for msg.sender.
     function createJobAsAgent(
         address owner,
         address provider,
+        address arbiter,
         uint256 amount,
         uint64 deadline,
         bytes32 termsHash,
@@ -178,18 +197,20 @@ contract AgentEscrow is ReentrancyGuard {
         SpendPolicy memory p = policies[owner][msg.sender];
         if (!p.active || block.timestamp >= p.expiresAt) revert PolicyInactive();
         if (!providerAllowed[owner][msg.sender][provider]) revert ProviderNotAllowed();
+        if (!arbiterAllowed[owner][msg.sender][arbiter]) revert ArbiterNotAllowed();
         if (amount > p.perJobCap) revert PerJobCapExceeded();
         uint256 day = dayIndex(block.timestamp);
         uint256 spent = spentPerDay[owner][msg.sender][day] + amount;
         if (spent > p.dailyCap) revert DailyCapExceeded();
         spentPerDay[owner][msg.sender][day] = spent;
-        id = _create(owner, msg.sender, provider, amount, deadline, termsHash, clientRef);
+        id = _create(owner, msg.sender, provider, arbiter, amount, deadline, termsHash, clientRef);
     }
 
     function _create(
         address buyer,
         address agent,
         address provider,
+        address arbiter,
         uint256 amount,
         uint64 deadline,
         bytes32 termsHash,
@@ -198,7 +219,8 @@ contract AgentEscrow is ReentrancyGuard {
         if (provider == address(0) || provider == buyer || provider == agent) {
             revert InvalidAddress();
         }
-        if (buyer == arbiter || provider == arbiter) revert InvalidAddress();
+        // The arbiter must be a third party: never a payer, payee or the buyer's agent.
+        if (arbiter == address(0) || arbiter == buyer || arbiter == provider || arbiter == agent) revert InvalidAddress();
         if (amount == 0) revert InvalidAmount();
         if (deadline <= block.timestamp || deadline > block.timestamp + MAX_DURATION) revert InvalidDeadline();
         if (termsHash == bytes32(0) || clientRef == bytes32(0)) revert InvalidCommitment();
@@ -213,12 +235,13 @@ contract AgentEscrow is ReentrancyGuard {
             status: Status.Funded,
             provider: provider,
             agent: agent,
+            arbiter: arbiter,
             amount: amount,
             termsHash: termsHash,
             evidenceHash: bytes32(0),
             clientRef: clientRef
         });
-        emit JobCreated(id, buyer, provider, agent, amount, deadline, termsHash, clientRef);
+        emit JobCreated(id, buyer, provider, agent, arbiter, amount, deadline, termsHash, clientRef);
 
         uint256 beforeBalance = usdc.balanceOf(address(this));
         usdc.safeTransferFrom(buyer, address(this), amount);
@@ -250,7 +273,7 @@ contract AgentEscrow is ReentrancyGuard {
         _pay(id, job);
     }
 
-    /// @notice A party can dispute a funded or delivered job; only the named arbiter decides.
+    /// @notice A party can dispute a funded or delivered job; only the job's named arbiter decides.
     function dispute(uint256 id) external {
         Job storage job = _jobs[id];
         if (!_isBuyerSide(job) && msg.sender != job.provider) revert Forbidden();
@@ -260,8 +283,8 @@ contract AgentEscrow is ReentrancyGuard {
     }
 
     function resolve(uint256 id, bool payProvider) external nonReentrant {
-        if (msg.sender != arbiter) revert Forbidden();
         Job storage job = _jobs[id];
+        if (job.arbiter == address(0) || msg.sender != job.arbiter) revert Forbidden();
         if (job.status != Status.Disputed) revert InvalidState();
         if (payProvider) _pay(id, job);
         else _refund(id, job);

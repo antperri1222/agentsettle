@@ -79,10 +79,10 @@ cd contracts
 CONFIRM_TESTNET_DEPLOY=base-sepolia forge script script/DeployBaseSepolia.s.sol \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" --account agentsettle-deployer --sender "$DEPLOYER_ADDRESS"
 ```
-The script refuses unless: chain = 84532; the verified USDC address has code, 6 decimals and symbol `USDC`; treasury ≠ arbiter; arbiter ≠ deployer; fee ≤ 10%.
+The script refuses unless: chain = 84532; the verified USDC address has code, 6 decimals and symbol `USDC`; treasury is set and ≠ deployer; fee ≤ 10%. (v2 has no deployment-wide arbiter; each job names one.)
 
 ### 3.5 Broadcast (only after explicit go-ahead)
-Run the same command with `--broadcast` appended. Then read the real address and block from the receipt:
+Run the same command with `--broadcast` appended. Then, from the project root, run `npm run deploy:record`: it verifies the new contract on-chain (code, `VERSION` 2, verified USDC, treasury), updates `ESCROW_ADDRESS`/`ESCROW_DEPLOY_BLOCK` in `.env` (keeping the old values as a comment) and `deployments/base-sepolia.json`, and prints the Railway variables to change. To do it by hand instead, read the address and block from the receipt:
 ```bash
 python3 -c "import json;d=json.load(open('broadcast/DeployBaseSepolia.s.sol/84532/run-latest.json'));r=d['receipts'][0];print('ESCROW_ADDRESS='+r['contractAddress']);print('ESCROW_DEPLOY_BLOCK='+str(int(r['blockNumber'],16)))"
 ```
@@ -128,5 +128,5 @@ A full happy path is about 390k gas after one-time setup. Base L2 fees depend on
 
 ## 5. Incident basics (testnet)
 - Agent key compromised: the owner calls `revokePolicy(agent)` and sets the USDC allowance to 0. Open jobs created by that agent can still be approved by the agent, so dispute them from the owner key.
-- Arbiter key compromised: there is no rotation (immutable). Stop creating jobs on that deployment and redeploy with a new arbiter.
+- Arbiter key compromised (v2): run `npm run owner -- disallow-arbiter <addr>` so the agent stops naming it; jobs that already name it stay with it, so dispute or settle them promptly. No redeploy needed.
 - RPC outage: the dashboard shows the last known state with a stale banner. Nothing is signed server-side.

@@ -6,7 +6,7 @@
 // withhold it. Reads require a fresh wallet signature; the signer must be the job's buyer, buyer agent, provider or
 // arbiter ON-CHAIN. Request bodies never establish identity. No keys are held here.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, getAddress, http, isHex, keccak256, zeroAddress, type Address, type Chain, type Hex, type PublicClient } from 'viem';
@@ -15,7 +15,10 @@ import { agentEscrowAbi } from '../sdk/artifacts.ts';
 import { localChain } from '../sdk/local.ts';
 import { getNetwork } from '../sdk/networks.ts';
 import { EscrowIndexer } from '../sdk/indexer.ts';
-import { MAX_BLOB_BYTES, SIGNATURE_WINDOW_SECONDS, readMessage, recoverSigner, uploadMessage, type BlobKind } from '../sdk/relay.ts';
+import {
+  MAX_BLOB_BYTES, MAX_STATEMENT_BYTES, MAX_STATEMENTS_PER_JOB, SIGNATURE_WINDOW_SECONDS, readMessage, recoverSigner, statementMessage,
+  statementsReadMessage, uploadMessage, type BlobKind,
+} from '../sdk/relay.ts';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Normal activity → stdout (info); problems → stderr (hosts like Railway show stderr as errors).
@@ -45,7 +48,6 @@ export function createRelay(opts: RelayOptions) {
   mkdirSync(blobs, { recursive: true });
   const perMinute = opts.uploadsPerMinute ?? 30;
   const uploads = new Map<string, number[]>();
-  let arbiter: Address | null = null;
 
   // ── shared event indexer ──
   let indexer: EscrowIndexer | null = null;
@@ -158,6 +160,35 @@ export function createRelay(opts: RelayOptions) {
         return send(res, 200, { hash, bytes: body.length });
       }
 
+      // Dispute statements: signed notes from a job's parties (buyer, buyer agent, provider, arbiter), readable only by them.
+      const st = url.pathname.match(/^\/v1\/jobs\/(\d{1,20})\/statements$/);
+      if (st && (req.method === 'POST' || req.method === 'GET')) {
+        const jobId = BigInt(st[1]);
+        const dir = join(opts.dataDir, 'statements', String(jobId));
+        const body = req.method === 'POST' ? await readBody(req) : Buffer.alloc(0);
+        if (body.length > MAX_STATEMENT_BYTES) return send(res, 413, { error: `Statement exceeds ${MAX_STATEMENT_BYTES} bytes` });
+        const signer = req.method === 'POST'
+          ? await authenticate(req, (ts) => statementMessage(network.chainId, escrow, jobId, keccak256(body), ts))
+          : await authenticate(req, (ts) => statementsReadMessage(network.chainId, escrow, jobId, ts));
+        const job = await pub.readContract({ address: escrow, abi: agentEscrowAbi, functionName: 'getJob', args: [jobId] });
+        if (job.status === 0) return send(res, 404, { error: 'No such job' });
+        const parties = [job.buyer, job.provider, job.agent, job.arbiter].filter((a) => a !== zeroAddress).map((a) => getAddress(a));
+        if (!parties.includes(signer)) return send(res, 403, { error: 'Signer is not a party to this job' });
+        const existing = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.json')).sort() : [];
+        if (req.method === 'GET') {
+          return send(res, 200, { job_id: String(jobId), statements: existing.map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8'))) });
+        }
+        if (existing.length >= MAX_STATEMENTS_PER_JOB) return send(res, 429, { error: 'Too many statements for this job' });
+        rateLimit(signer);
+        mkdirSync(dir, { recursive: true });
+        const at = new Date().toISOString();
+        const file = join(dir, `${at.replace(/[:.]/g, '-')}-${signer.toLowerCase()}.json`);
+        writeFileSync(`${file}.tmp`, JSON.stringify({ by: signer, text: body.toString('utf8'), at }));
+        renameSync(`${file}.tmp`, file);
+        log(`statement for job ${jobId} (${body.length} bytes) from ${signer}`);
+        return send(res, 200, { ok: true, at });
+      }
+
       const get = url.pathname.match(/^\/v1\/jobs\/(\d{1,20})\/(terms|deliverable)$/);
       if (req.method === 'GET' && get) {
         const jobId = BigInt(get[1]);
@@ -165,8 +196,7 @@ export function createRelay(opts: RelayOptions) {
         const signer = await authenticate(req, (ts) => readMessage(network.chainId, escrow, jobId, kind, ts));
         const job = await pub.readContract({ address: escrow, abi: agentEscrowAbi, functionName: 'getJob', args: [jobId] });
         if (job.status === 0) return send(res, 404, { error: 'No such job' });
-        arbiter ??= getAddress(await pub.readContract({ address: escrow, abi: agentEscrowAbi, functionName: 'arbiter' }));
-        const parties = [job.buyer, job.provider, job.agent, arbiter].filter((a) => a !== zeroAddress).map((a) => getAddress(a));
+        const parties = [job.buyer, job.provider, job.agent, job.arbiter] // v2: each job names its own arbiter.filter((a) => a !== zeroAddress).map((a) => getAddress(a));
         if (!parties.includes(signer)) return send(res, 403, { error: 'Signer is not a party to this job' });
         const hash = (kind === 'terms' ? job.termsHash : job.evidenceHash).toLowerCase();
         if (/^0x0+$/.test(hash)) return send(res, 404, { error: 'Nothing recorded on-chain yet' });

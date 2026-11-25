@@ -47,6 +47,8 @@ export interface Job {
   buyer: Address;
   provider: Address;
   agent: Address | null;
+  /** The only address that can resolve a dispute on this job (fixed at creation). */
+  arbiter: Address;
   amount: bigint;
   deadline: bigint;
   status: JobStatus;
@@ -176,6 +178,7 @@ export class AgentSettleClient {
       buyer: j.buyer,
       provider: j.provider,
       agent: j.agent === zeroAddress ? null : j.agent,
+      arbiter: j.arbiter,
       amount: j.amount,
       deadline: j.deadline,
       status: JOB_STATUS[j.status],
@@ -287,20 +290,20 @@ export class AgentSettleClient {
    * Pass `owner` to fund as a delegated agent under the owner's on-chain SpendPolicy.
    */
   async createJob(p: {
-    provider: Address; amount: bigint; deadline: bigint; termsHash: Hex; idempotencyKey: string; owner?: Address;
+    provider: Address; arbiter: Address; amount: bigint; deadline: bigint; termsHash: Hex; idempotencyKey: string; owner?: Address;
   }): Promise<{ jobId: bigint; reused: boolean; receipt: TxReceipt | null }> {
     const clientRef = clientRefFromKey(p.idempotencyKey);
     const buyer = p.owner ?? this.account;
     const existing = await this.jobIdByRef(buyer, clientRef);
     if (existing !== 0n) {
       const job = await this.getJob(existing);
-      const same = job.provider === getAddress(p.provider) && job.amount === p.amount && job.termsHash === p.termsHash;
+      const same = job.provider === getAddress(p.provider) && job.arbiter === getAddress(p.arbiter) && job.amount === p.amount && job.termsHash === p.termsHash;
       if (!same) throw new AgentSettleError('IdempotencyConflict', 'Idempotency key was already used with different parameters');
       return { jobId: existing, reused: true, receipt: null };
     }
     const receipt = p.owner
-      ? await this.send('createJobAsAgent', this.escrow, agentEscrowAbi, 'createJobAsAgent', [p.owner, p.provider, p.amount, p.deadline, p.termsHash, clientRef])
-      : await this.send('createJob', this.escrow, agentEscrowAbi, 'createJob', [p.provider, p.amount, p.deadline, p.termsHash, clientRef]);
+      ? await this.send('createJobAsAgent', this.escrow, agentEscrowAbi, 'createJobAsAgent', [p.owner, p.provider, p.arbiter, p.amount, p.deadline, p.termsHash, clientRef])
+      : await this.send('createJob', this.escrow, agentEscrowAbi, 'createJob', [p.provider, p.arbiter, p.amount, p.deadline, p.termsHash, clientRef]);
     const r = await this.publicClient.getTransactionReceipt({ hash: receipt.hash });
     for (const log of r.logs) {
       if (getAddress(log.address) !== this.escrow) continue;
@@ -327,5 +330,9 @@ export class AgentSettleClient {
   revokePolicy(agent: Address) { return this.send('revokePolicy', this.escrow, agentEscrowAbi, 'revokePolicy', [agent]); }
   setProviderAllowed(agent: Address, provider: Address, allowed: boolean) {
     return this.send('setProviderAllowed', this.escrow, agentEscrowAbi, 'setProviderAllowed', [agent, provider, allowed]);
+  }
+  /** Owner-signed: which arbiters `agent` may name on jobs it funds from the owner's allowance. */
+  setArbiterAllowed(agent: Address, arbiter: Address, allowed: boolean) {
+    return this.send('setArbiterAllowed', this.escrow, agentEscrowAbi, 'setArbiterAllowed', [agent, arbiter, allowed]);
   }
 }

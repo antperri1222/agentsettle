@@ -10,7 +10,8 @@ import {AgentEscrow} from "../src/AgentEscrow.sol";
  *
  * Preconditions (see docs/RUNBOOK.md):
  *   CONFIRM_TESTNET_DEPLOY=base-sepolia   explicit, typed authorization
- *   TREASURY_ADDRESS, ARBITER_ADDRESS     distinct, non-zero, not the deployer
+ *   TREASURY_ADDRESS                      non-zero, not the deployer
+ * v2 has no deployment-wide arbiter: each job names its own (see AgentEscrow).
  *   FEE_BPS (optional, default 50)
  * Signer: a Foundry keystore account (`--account`), never a raw private key in env or prompts.
  *
@@ -24,14 +25,13 @@ contract DeployBaseSepolia is Script {
         string memory confirm = vm.envOr("CONFIRM_TESTNET_DEPLOY", string(""));
         require(keccak256(bytes(confirm)) == keccak256("base-sepolia"), "Set CONFIRM_TESTNET_DEPLOY=base-sepolia");
         address treasury = vm.envAddress("TREASURY_ADDRESS");
-        address arbiter = vm.envAddress("ARBITER_ADDRESS");
         uint256 fee = vm.envOr("FEE_BPS", uint256(50));
         require(fee <= 1000, "FEE_BPS > 1000");
 
         vm.startBroadcast();
         (, address deployer,) = vm.readCallers();
-        preflight(deployer, treasury, arbiter);
-        escrow = new AgentEscrow(BASE_SEPOLIA_USDC, treasury, arbiter, uint16(fee));
+        preflight(deployer, treasury);
+        escrow = new AgentEscrow(BASE_SEPOLIA_USDC, treasury, uint16(fee));
         vm.stopBroadcast();
 
         console.log("AgentEscrow deployed (Base Sepolia TESTNET):", address(escrow));
@@ -40,15 +40,14 @@ contract DeployBaseSepolia is Script {
     }
 
     /// @notice All network / asset / role checks. Public so tests can exercise it.
-    function preflight(address deployer, address treasury, address arbiter) public view {
+    function preflight(address deployer, address treasury) public view {
         require(block.chainid == BASE_SEPOLIA_CHAIN_ID, "Not Base Sepolia (84532); refusing");
         require(BASE_SEPOLIA_USDC.code.length > 0, "No contract at verified USDC address");
         require(IERC20Metadata(BASE_SEPOLIA_USDC).decimals() == 6, "USDC decimals != 6");
         require(
             keccak256(bytes(IERC20Metadata(BASE_SEPOLIA_USDC).symbol())) == keccak256("USDC"), "Token symbol != USDC"
         );
-        require(treasury != address(0) && arbiter != address(0), "Zero role address");
-        require(treasury != arbiter, "Treasury and arbiter must differ");
-        require(arbiter != deployer, "Arbiter must not be the deployer key");
+        require(treasury != address(0), "Zero treasury address");
+        require(treasury != deployer, "Treasury must not be the deployer key");
     }
 }

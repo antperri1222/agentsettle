@@ -92,7 +92,7 @@ export async function deployLocal(rpcUrl: string, opts: { feeBps?: number; mintT
   const tokenR = await pub.waitForTransactionReceipt({ hash: tokenHash });
   const token = tokenR.contractAddress!;
   const escrowHash = await deployer.deployContract({
-    abi: agentEscrowAbi, bytecode: agentEscrowBytecode, args: [token, roles.treasury, roles.arbiter, feeBps],
+    abi: agentEscrowAbi, bytecode: agentEscrowBytecode, args: [token, roles.treasury, feeBps],
   });
   const escrowR = await pub.waitForTransactionReceipt({ hash: escrowHash });
   const escrow = escrowR.contractAddress!;

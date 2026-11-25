@@ -88,7 +88,7 @@ contract AgentEscrowTest is Test {
     function setUp() public {
         vm.warp(1_750_000_000);
         token = new MockUSDC();
-        escrow = new AgentEscrow(address(token), treasury, arbiter, 50);
+        escrow = new AgentEscrow(address(token), treasury, 50);
         token.mint(buyer, START);
         vm.prank(buyer);
         token.approve(address(escrow), type(uint256).max);
@@ -100,7 +100,7 @@ contract AgentEscrowTest is Test {
 
     function _fund() internal returns (uint256) {
         vm.prank(buyer);
-        return escrow.createJob(provider, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+        return escrow.createJob(provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
     }
 
     function _delivered() internal returns (uint256 id) {
@@ -117,15 +117,13 @@ contract AgentEscrowTest is Test {
 
     function testConstructorRejectsBadConfig() public {
         vm.expectRevert(AgentEscrow.InvalidAddress.selector);
-        new AgentEscrow(address(0), treasury, arbiter, 50);
+        new AgentEscrow(address(0), treasury, 50);
         vm.expectRevert(AgentEscrow.InvalidAddress.selector);
-        new AgentEscrow(address(token), address(0), arbiter, 50);
+        new AgentEscrow(address(token), address(0), 50);
         vm.expectRevert(AgentEscrow.InvalidAddress.selector);
-        new AgentEscrow(address(token), treasury, address(0), 50);
-        vm.expectRevert(AgentEscrow.InvalidAddress.selector);
-        new AgentEscrow(stranger, treasury, arbiter, 50); // EOA, not a token contract
+        new AgentEscrow(stranger, treasury, 50); // EOA, not a token contract
         vm.expectRevert(AgentEscrow.InvalidAmount.selector);
-        new AgentEscrow(address(token), treasury, arbiter, 1001);
+        new AgentEscrow(address(token), treasury, 1001);
     }
 
     // ─────────────── happy paths ───────────────
@@ -297,7 +295,10 @@ contract AgentEscrowTest is Test {
         vm.expectRevert(AgentEscrow.Forbidden.selector);
         escrow.approve(999);
         vm.prank(arbiter);
-        vm.expectRevert(AgentEscrow.InvalidState.selector);
+        vm.expectRevert(AgentEscrow.Forbidden.selector); // v2: no job, so no arbiter for it
+        escrow.resolve(999, true);
+        vm.prank(address(0));
+        vm.expectRevert(AgentEscrow.Forbidden.selector); // the zero address is never an arbiter
         escrow.resolve(999, true);
         // address(0) can never act: no real signer controls it
         vm.prank(address(0));
@@ -343,21 +344,21 @@ contract AgentEscrowTest is Test {
         uint64 dl = uint64(block.timestamp + 1 days);
         vm.startPrank(buyer);
         vm.expectRevert(AgentEscrow.InvalidAmount.selector);
-        escrow.createJob(provider, 0, dl, TERMS, _ref());
+        escrow.createJob(provider, arbiter, 0, dl, TERMS, _ref());
         vm.expectRevert(AgentEscrow.InvalidCommitment.selector);
-        escrow.createJob(provider, FIVE_USDC, dl, bytes32(0), _ref());
+        escrow.createJob(provider, arbiter, FIVE_USDC, dl, bytes32(0), _ref());
         vm.expectRevert(AgentEscrow.InvalidCommitment.selector);
-        escrow.createJob(provider, FIVE_USDC, dl, TERMS, bytes32(0));
+        escrow.createJob(provider, arbiter, FIVE_USDC, dl, TERMS, bytes32(0));
         vm.expectRevert(AgentEscrow.InvalidAddress.selector);
-        escrow.createJob(address(0), FIVE_USDC, dl, TERMS, _ref());
+        escrow.createJob(address(0), arbiter, FIVE_USDC, dl, TERMS, _ref());
         vm.expectRevert(AgentEscrow.InvalidAddress.selector);
-        escrow.createJob(buyer, FIVE_USDC, dl, TERMS, _ref());
+        escrow.createJob(buyer, arbiter, FIVE_USDC, dl, TERMS, _ref());
         vm.expectRevert(AgentEscrow.InvalidAddress.selector);
-        escrow.createJob(arbiter, FIVE_USDC, dl, TERMS, _ref());
+        escrow.createJob(arbiter, arbiter, FIVE_USDC, dl, TERMS, _ref());
         vm.expectRevert(AgentEscrow.InvalidDeadline.selector);
-        escrow.createJob(provider, FIVE_USDC, uint64(block.timestamp), TERMS, _ref());
+        escrow.createJob(provider, arbiter, FIVE_USDC, uint64(block.timestamp), TERMS, _ref());
         vm.expectRevert(AgentEscrow.InvalidDeadline.selector);
-        escrow.createJob(provider, FIVE_USDC, uint64(block.timestamp + 91 days), TERMS, _ref());
+        escrow.createJob(provider, arbiter, FIVE_USDC, uint64(block.timestamp + 91 days), TERMS, _ref());
         vm.stopPrank();
     }
 
@@ -366,7 +367,7 @@ contract AgentEscrowTest is Test {
         vm.startPrank(arbiter);
         token.approve(address(escrow), FIVE_USDC);
         vm.expectRevert(AgentEscrow.InvalidAddress.selector);
-        escrow.createJob(provider, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+        escrow.createJob(provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
         vm.stopPrank();
     }
 
@@ -382,7 +383,7 @@ contract AgentEscrowTest is Test {
         token.mint(poor, FIVE_USDC);
         vm.prank(poor);
         vm.expectRevert(); // ERC20InsufficientAllowance
-        escrow.createJob(provider, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+        escrow.createJob(provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
         assertEq(escrow.nextId(), 0);
     }
 
@@ -391,9 +392,9 @@ contract AgentEscrowTest is Test {
     function testDuplicateClientRefRejected() public {
         bytes32 ref = keccak256("retry-me");
         vm.startPrank(buyer);
-        uint256 id = escrow.createJob(provider, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, ref);
+        uint256 id = escrow.createJob(provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, ref);
         vm.expectRevert(AgentEscrow.DuplicateClientRef.selector);
-        escrow.createJob(provider, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, ref);
+        escrow.createJob(provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, ref);
         vm.stopPrank();
         assertEq(escrow.jobIdByRef(buyer, ref), id);
         assertEq(token.balanceOf(address(escrow)), FIVE_USDC); // only funded once
@@ -406,31 +407,31 @@ contract AgentEscrowTest is Test {
         vm.prank(other);
         token.approve(address(escrow), FIVE_USDC);
         vm.prank(buyer);
-        escrow.createJob(provider, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, ref);
+        escrow.createJob(provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, ref);
         vm.prank(other); // another buyer cannot be griefed by front-running the same ref
-        escrow.createJob(provider, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, ref);
+        escrow.createJob(provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, ref);
     }
 
     // ─────────────── adversarial tokens ───────────────
 
     function testRejectsFeeOnTransferToken() public {
         FeeOnTransferToken fot = new FeeOnTransferToken();
-        AgentEscrow e = new AgentEscrow(address(fot), treasury, arbiter, 50);
+        AgentEscrow e = new AgentEscrow(address(fot), treasury, 50);
         fot.mint(buyer, START);
         vm.startPrank(buyer);
         fot.approve(address(e), type(uint256).max);
         vm.expectRevert(AgentEscrow.FeeOnTransferNotSupported.selector);
-        e.createJob(provider, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+        e.createJob(provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
         vm.stopPrank();
     }
 
     function _reentrantSetup() internal returns (ReentrantToken rt, AgentEscrow e, uint256 id) {
         rt = new ReentrantToken();
-        e = new AgentEscrow(address(rt), treasury, arbiter, 50);
+        e = new AgentEscrow(address(rt), treasury, 50);
         rt.mint(buyer, START);
         vm.startPrank(buyer);
         rt.approve(address(e), type(uint256).max);
-        id = e.createJob(provider, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+        id = e.createJob(provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
         vm.stopPrank();
         vm.prank(provider);
         e.deliver(id, EVIDENCE);
@@ -462,12 +463,13 @@ contract AgentEscrowTest is Test {
         vm.startPrank(buyer);
         escrow.setPolicy(agent, perJob, daily, uint64(block.timestamp + 30 days));
         escrow.setProviderAllowed(agent, provider, true);
+        escrow.setArbiterAllowed(agent, arbiter, true);
         vm.stopPrank();
     }
 
     function _agentCreate(uint256 amount) internal returns (uint256) {
         vm.prank(agent);
-        return escrow.createJobAsAgent(buyer, provider, amount, uint64(block.timestamp + 1 days), TERMS, _ref());
+        return escrow.createJobAsAgent(buyer, provider, arbiter, amount, uint64(block.timestamp + 1 days), TERMS, _ref());
     }
 
     function testAgentHappyPathFundsFromOwner() public {
@@ -497,14 +499,14 @@ contract AgentEscrowTest is Test {
     function testAgentWithoutPolicyRejected() public {
         vm.prank(agent);
         vm.expectRevert(AgentEscrow.PolicyInactive.selector);
-        escrow.createJobAsAgent(buyer, provider, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+        escrow.createJobAsAgent(buyer, provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
     }
 
     function testAgentPerJobCap() public {
         _grant(10_000_000, 25_000_000);
         vm.prank(agent);
         vm.expectRevert(AgentEscrow.PerJobCapExceeded.selector);
-        escrow.createJobAsAgent(buyer, provider, 10_000_001, uint64(block.timestamp + 1 days), TERMS, _ref());
+        escrow.createJobAsAgent(buyer, provider, arbiter, 10_000_001, uint64(block.timestamp + 1 days), TERMS, _ref());
     }
 
     function testAgentDailyCapAndRollover() public {
@@ -513,7 +515,7 @@ contract AgentEscrowTest is Test {
         _agentCreate(10_000_000);
         vm.prank(agent);
         vm.expectRevert(AgentEscrow.DailyCapExceeded.selector);
-        escrow.createJobAsAgent(buyer, provider, 5_000_001, uint64(block.timestamp + 1 days), TERMS, _ref());
+        escrow.createJobAsAgent(buyer, provider, arbiter, 5_000_001, uint64(block.timestamp + 1 days), TERMS, _ref());
         _agentCreate(5_000_000); // exactly at cap is fine
         vm.warp(block.timestamp + 1 days);
         _agentCreate(10_000_000); // new day, new budget
@@ -526,7 +528,7 @@ contract AgentEscrowTest is Test {
         escrow.providerRefund(id);
         vm.prank(agent);
         vm.expectRevert(AgentEscrow.DailyCapExceeded.selector);
-        escrow.createJobAsAgent(buyer, provider, 1, uint64(block.timestamp + 1 days), TERMS, _ref());
+        escrow.createJobAsAgent(buyer, provider, arbiter, 1, uint64(block.timestamp + 1 days), TERMS, _ref());
     }
 
     function testAgentAllowlistEnforced() public {
@@ -534,7 +536,7 @@ contract AgentEscrowTest is Test {
         address rogue = makeAddr("rogue");
         vm.prank(agent);
         vm.expectRevert(AgentEscrow.ProviderNotAllowed.selector);
-        escrow.createJobAsAgent(buyer, rogue, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+        escrow.createJobAsAgent(buyer, rogue, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
     }
 
     function testAgentCannotPayItself() public {
@@ -543,7 +545,7 @@ contract AgentEscrowTest is Test {
         escrow.setProviderAllowed(agent, agent, true);
         vm.prank(agent);
         vm.expectRevert(AgentEscrow.InvalidAddress.selector);
-        escrow.createJobAsAgent(buyer, agent, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+        escrow.createJobAsAgent(buyer, agent, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
     }
 
     function testPolicyRevocationAndExpiry() public {
@@ -553,13 +555,13 @@ contract AgentEscrowTest is Test {
         escrow.revokePolicy(agent);
         vm.prank(agent);
         vm.expectRevert(AgentEscrow.PolicyInactive.selector);
-        escrow.createJobAsAgent(buyer, provider, 1, uint64(block.timestamp + 1 days), TERMS, _ref());
+        escrow.createJobAsAgent(buyer, provider, arbiter, 1, uint64(block.timestamp + 1 days), TERMS, _ref());
 
         _grant(10_000_000, 25_000_000);
         vm.warp(block.timestamp + 30 days);
         vm.prank(agent);
         vm.expectRevert(AgentEscrow.PolicyInactive.selector);
-        escrow.createJobAsAgent(buyer, provider, 1, uint64(block.timestamp + 1 days), TERMS, _ref());
+        escrow.createJobAsAgent(buyer, provider, arbiter, 1, uint64(block.timestamp + 1 days), TERMS, _ref());
     }
 
     function testPolicyIsPerOwner() public {
@@ -571,7 +573,7 @@ contract AgentEscrowTest is Test {
         token.approve(address(escrow), type(uint256).max);
         vm.prank(agent);
         vm.expectRevert(AgentEscrow.PolicyInactive.selector);
-        escrow.createJobAsAgent(victim, provider, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+        escrow.createJobAsAgent(victim, provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
     }
 
     function testAgentOfOneJobCannotActOnAnother() public {
@@ -588,8 +590,6 @@ contract AgentEscrowTest is Test {
         escrow.setPolicy(address(0), 1, 1, uint64(block.timestamp + 1));
         vm.expectRevert(AgentEscrow.InvalidAddress.selector);
         escrow.setPolicy(buyer, 1, 1, uint64(block.timestamp + 1));
-        vm.expectRevert(AgentEscrow.InvalidAddress.selector);
-        escrow.setPolicy(arbiter, 1, 1, uint64(block.timestamp + 1));
         vm.expectRevert(AgentEscrow.InvalidAmount.selector);
         escrow.setPolicy(agent, 0, 1, uint64(block.timestamp + 1));
         vm.expectRevert(AgentEscrow.InvalidAmount.selector);
@@ -604,7 +604,7 @@ contract AgentEscrowTest is Test {
     function testFuzzFeeConservation(uint256 amount, uint16 bps) public {
         bps = uint16(bound(bps, 0, 1000));
         amount = bound(amount, 1, 1e15); // up to 1B USDC
-        AgentEscrow e = new AgentEscrow(address(token), treasury, arbiter, bps);
+        AgentEscrow e = new AgentEscrow(address(token), treasury, bps);
         (uint256 payout, uint256 fee) = e.quote(amount);
         assertEq(payout + fee, amount);
         assertLe(fee * 10_000, amount * bps);
@@ -613,7 +613,7 @@ contract AgentEscrowTest is Test {
     function testFuzzSettlementConservesBalances(uint256 amount, bool viaDispute, bool pay) public {
         amount = bound(amount, 1, START);
         vm.prank(buyer);
-        uint256 id = escrow.createJob(provider, amount, uint64(block.timestamp + 1 days), TERMS, _ref());
+        uint256 id = escrow.createJob(provider, arbiter, amount, uint64(block.timestamp + 1 days), TERMS, _ref());
         vm.prank(provider);
         escrow.deliver(id, EVIDENCE);
         if (viaDispute) {
@@ -660,11 +660,106 @@ contract AgentEscrowTest is Test {
         for (uint256 i; i < amounts.length; i++) {
             uint256 a = bound(amounts[i], 1, 10_000_000);
             vm.prank(agent);
-            try escrow.createJobAsAgent(buyer, provider, a, uint64(block.timestamp + 1 days), TERMS, _ref()) {
+            try escrow.createJobAsAgent(buyer, provider, arbiter, a, uint64(block.timestamp + 1 days), TERMS, _ref()) {
                 spent += a;
             } catch {}
         }
         assertLe(spent, cap);
         assertEq(token.balanceOf(address(escrow)), spent);
+    }
+
+    // ─────────────── v2: per-job arbiter ───────────────
+
+    function testJobRecordsItsArbiterAndEmitsIt() public {
+        vm.prank(buyer);
+        token.approve(address(escrow), FIVE_USDC);
+        uint64 dl = uint64(block.timestamp + 1 days);
+        bytes32 ref = keccak256("arb-event");
+        vm.expectEmit(true, true, true, true);
+        emit AgentEscrow.JobCreated(1, buyer, provider, address(0), arbiter, FIVE_USDC, dl, TERMS, ref);
+        vm.prank(buyer);
+        uint256 id = escrow.createJob(provider, arbiter, FIVE_USDC, dl, TERMS, ref);
+        assertEq(escrow.getJob(id).arbiter, arbiter);
+        assertEq(escrow.VERSION(), 2);
+    }
+
+    function testArbiterMustBeAThirdParty() public {
+        vm.startPrank(buyer);
+        token.approve(address(escrow), FIVE_USDC);
+        uint64 dl = uint64(block.timestamp + 1 days);
+        vm.expectRevert(AgentEscrow.InvalidAddress.selector);
+        escrow.createJob(provider, address(0), FIVE_USDC, dl, TERMS, _ref());
+        vm.expectRevert(AgentEscrow.InvalidAddress.selector);
+        escrow.createJob(provider, buyer, FIVE_USDC, dl, TERMS, _ref());
+        vm.expectRevert(AgentEscrow.InvalidAddress.selector);
+        escrow.createJob(provider, provider, FIVE_USDC, dl, TERMS, _ref());
+        vm.stopPrank();
+    }
+
+    function testOnlyTheJobsOwnArbiterCanResolve() public {
+        address otherArbiter = makeAddr("otherArbiter");
+        vm.startPrank(buyer);
+        token.approve(address(escrow), 2 * FIVE_USDC);
+        uint256 a = escrow.createJob(provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+        uint256 b = escrow.createJob(provider, otherArbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+        escrow.dispute(a);
+        escrow.dispute(b);
+        vm.stopPrank();
+
+        vm.prank(arbiter);
+        vm.expectRevert(AgentEscrow.Forbidden.selector);
+        escrow.resolve(b, true); // not b's arbiter
+        vm.prank(otherArbiter);
+        vm.expectRevert(AgentEscrow.Forbidden.selector);
+        escrow.resolve(a, true); // not a's arbiter
+
+        vm.prank(otherArbiter);
+        escrow.resolve(b, false);
+        assertEq(uint8(_status(b)), uint8(AgentEscrow.Status.Refunded));
+        vm.prank(arbiter);
+        escrow.resolve(a, true);
+        assertEq(uint8(_status(a)), uint8(AgentEscrow.Status.Paid));
+    }
+
+    function testResolveOnUnknownJobIsForbidden() public {
+        vm.prank(arbiter);
+        vm.expectRevert(AgentEscrow.Forbidden.selector);
+        escrow.resolve(999, true);
+    }
+
+    function testAgentCanOnlyNameAllowlistedArbiters() public {
+        _grant(10_000_000, 25_000_000);
+        address friendly = makeAddr("friendlyArbiter");
+        vm.prank(agent);
+        vm.expectRevert(AgentEscrow.ArbiterNotAllowed.selector);
+        escrow.createJobAsAgent(buyer, provider, friendly, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+
+        vm.prank(buyer);
+        escrow.setArbiterAllowed(agent, arbiter, false);
+        vm.prank(agent);
+        vm.expectRevert(AgentEscrow.ArbiterNotAllowed.selector);
+        escrow.createJobAsAgent(buyer, provider, arbiter, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
+    }
+
+    function testAgentCannotBeItsOwnArbiter() public {
+        _grant(10_000_000, 25_000_000);
+        vm.startPrank(buyer);
+        vm.expectRevert(AgentEscrow.InvalidAddress.selector);
+        escrow.setArbiterAllowed(agent, agent, true);
+        vm.expectRevert(AgentEscrow.InvalidAddress.selector);
+        escrow.setArbiterAllowed(agent, buyer, true);
+        vm.expectRevert(AgentEscrow.InvalidAddress.selector);
+        escrow.setArbiterAllowed(agent, address(0), true);
+        vm.stopPrank();
+    }
+
+    function testProviderCanNeverBeArbiterEvenIfAllowlisted() public {
+        // Even if an owner allowlists the provider as an arbiter, the contract refuses provider == arbiter.
+        _grant(10_000_000, 25_000_000);
+        vm.prank(buyer);
+        escrow.setArbiterAllowed(agent, provider, true);
+        vm.prank(agent);
+        vm.expectRevert(AgentEscrow.InvalidAddress.selector);
+        escrow.createJobAsAgent(buyer, provider, provider, FIVE_USDC, uint64(block.timestamp + 1 days), TERMS, _ref());
     }
 }

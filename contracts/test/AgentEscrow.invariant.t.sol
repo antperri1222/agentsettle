@@ -57,7 +57,7 @@ contract EscrowHandler is Test {
         if (token.balanceOf(buyer) < amount) return;
         duration = uint32(bound(duration, 1, 30 days));
         vm.prank(buyer);
-        escrow.createJob(provider, amount, uint64(block.timestamp + duration), keccak256("t"), bytes32(++refNonce));
+        escrow.createJob(provider, arbiter, amount, uint64(block.timestamp + duration), keccak256("t"), bytes32(++refNonce));
         ghostFunded += amount;
     }
 
@@ -148,7 +148,7 @@ contract AgentEscrowInvariantTest is Test {
     function setUp() public {
         vm.warp(1_750_000_000);
         token = new MockUSDC();
-        escrow = new AgentEscrow(address(token), treasury, arbiter, 50);
+        escrow = new AgentEscrow(address(token), treasury, 50);
         token.mint(buyer, START);
         vm.prank(buyer);
         token.approve(address(escrow), type(uint256).max);

@@ -35,6 +35,7 @@ console.log('\n1. Owner grants buyerAgent an on-chain budget: $10/job, $25/day, 
 const now = (await pub.getBlock()).timestamp;
 show(await c.owner.setPolicy(d.roles.buyerAgent, parseUsdcUnits('10'), parseUsdcUnits('25'), now + 7n * 86_400n));
 show(await c.owner.setProviderAllowed(d.roles.buyerAgent, d.roles.providerAgent, true));
+show(await c.owner.setArbiterAllowed(d.roles.buyerAgent, d.roles.arbiter, true));
 show(await c.owner.approveSpend(parseUsdcUnits('25'))); // exact allowance, never unlimited
 
 async function fund(amountStr: string, description: string, key: string) {
@@ -44,7 +45,7 @@ async function fund(amountStr: string, description: string, key: string) {
     version: 'agentsettle.terms.v1', chainId: 31337, escrow: d.escrow, provider: d.roles.providerAgent,
     amountUnits: String(amount), deadline: Number(deadline), description, acceptanceCriteria: ['Structured markdown', 'Source links'],
   });
-  const res = await c.buyerAgent.createJob({ owner: d.roles.owner, provider: d.roles.providerAgent, amount, deadline, termsHash, idempotencyKey: key });
+  const res = await c.buyerAgent.createJob({ owner: d.roles.owner, provider: d.roles.providerAgent, arbiter: d.roles.arbiter, amount, deadline, termsHash, idempotencyKey: key });
   if (res.receipt) show(res.receipt);
   return res.jobId;
 }

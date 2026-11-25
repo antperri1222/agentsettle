@@ -50,7 +50,7 @@ async function fundJob(amount: bigint, description: string, idem = key()) {
   const dl = await deadline();
   const termsHash = terms(d.roles.providerAgent, amount, dl, description);
   return clients.buyerAgent.createJob({
-    owner: d.roles.owner, provider: d.roles.providerAgent, amount, deadline: dl, termsHash, idempotencyKey: idem,
+    owner: d.roles.owner, provider: d.roles.providerAgent, arbiter: d.roles.arbiter, amount, deadline: dl, termsHash, idempotencyKey: idem,
   });
 }
 
@@ -68,6 +68,7 @@ before(async () => {
   const now = (await pub().getBlock()).timestamp;
   await clients.owner.setPolicy(d.roles.buyerAgent, parseUsdcUnits('10'), parseUsdcUnits('25'), now + 86_400n * 7n);
   await clients.owner.setProviderAllowed(d.roles.buyerAgent, d.roles.providerAgent, true);
+  await clients.owner.setArbiterAllowed(d.roles.buyerAgent, d.roles.arbiter, true);
   await clients.owner.approveSpend(parseUsdcUnits('25'));
 });
 
@@ -149,7 +150,7 @@ describe('Anvil end-to-end (real signatures)', () => {
     const dl = await deadline(60);
     const amount = parseUsdcUnits('1');
     const { jobId } = await clients.buyerAgent.createJob({
-      owner: d.roles.owner, provider: d.roles.providerAgent, amount, deadline: dl,
+      owner: d.roles.owner, provider: d.roles.providerAgent, arbiter: d.roles.arbiter, amount, deadline: dl,
       termsHash: terms(d.roles.providerAgent, amount, dl, 'Will expire'), idempotencyKey: key(),
     });
     await expectCode(clients.buyerAgent.refundExpired(jobId), 'DeadlineNotPassed');
@@ -164,7 +165,7 @@ describe('Anvil end-to-end (real signatures)', () => {
     const idem = key();
     const amount = parseUsdcUnits('0.5');
     const dl = await deadline();
-    const args = { owner: d.roles.owner, provider: d.roles.providerAgent, amount, deadline: dl,
+    const args = { owner: d.roles.owner, provider: d.roles.providerAgent, arbiter: d.roles.arbiter, amount, deadline: dl,
       termsHash: terms(d.roles.providerAgent, amount, dl, 'Retry me'), idempotencyKey: idem };
     const first = await clients.buyerAgent.createJob(args);
     const escrowBal = (await balances()).escrow;
@@ -179,13 +180,13 @@ describe('Anvil end-to-end (real signatures)', () => {
     await expectCode(fundJob(parseUsdcUnits('10.000001'), 'Over per-job cap'), 'PerJobCapExceeded');
     const dl = await deadline();
     await expectCode(
-      clients.buyerAgent.createJob({ owner: d.roles.owner, provider: d.roles.stranger, amount: 1n, deadline: dl,
+      clients.buyerAgent.createJob({ owner: d.roles.owner, provider: d.roles.stranger, arbiter: d.roles.arbiter, amount: 1n, deadline: dl,
         termsHash: terms(d.roles.stranger, 1n, dl, 'Not allowlisted'), idempotencyKey: key() }),
       'ProviderNotAllowed',
     );
     // Stranger has no policy from the owner.
     await expectCode(
-      clients.stranger.createJob({ owner: d.roles.owner, provider: d.roles.providerAgent, amount: 1n, deadline: dl,
+      clients.stranger.createJob({ owner: d.roles.owner, provider: d.roles.providerAgent, arbiter: d.roles.arbiter, amount: 1n, deadline: dl,
         termsHash: terms(d.roles.providerAgent, 1n, dl, 'No policy'), idempotencyKey: key() }),
       'PolicyInactive',
     );

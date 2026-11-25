@@ -89,7 +89,7 @@ async function fund(amount: bigint, description: string, key: string) {
     version: 'agentsettle.terms.v1', chainId: network.chainId, escrow, provider: addr.providerAgent,
     amountUnits: String(amount), deadline: Number(deadline), description, acceptanceCriteria: ['Markdown report'],
   });
-  const r = await c.buyerAgent.createJob({ owner: addr.owner, provider: addr.providerAgent, amount, deadline, termsHash, idempotencyKey: key });
+  const r = await c.buyerAgent.createJob({ owner: addr.owner, provider: addr.providerAgent, arbiter: addr.arbiter, amount, deadline, termsHash, idempotencyKey: key });
   if (r.receipt) show(r.receipt);
   return r.jobId;
 }
@@ -114,6 +114,7 @@ console.log('\n1. Owner sets on-chain budget for buyerAgent ($2/job, $5/day, pro
 const now = (await pub.getBlock()).timestamp;
 show(await c.owner.setPolicy(addr.buyerAgent, POLICY.perJob, POLICY.daily, now + 7n * 86_400n));
 show(await c.owner.setProviderAllowed(addr.buyerAgent, addr.providerAgent, true));
+show(await c.owner.setArbiterAllowed(addr.buyerAgent, addr.arbiter, true));
 show(await c.owner.approveSpend(JOB_RELEASE + JOB_REFUND));
 
 console.log(`\n2. Release path: $${formatUsdcUnits(JOB_RELEASE)} job → provider delivers → buyerAgent approves`);

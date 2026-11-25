@@ -35,6 +35,7 @@ export interface IndexedJob {
   buyer: Address;
   provider: Address;
   agent: Address | null;
+  arbiter: Address;
   amount: string;
   amountUnits: string;
   deadline: string;
@@ -185,6 +186,7 @@ export class EscrowIndexer {
     for (const log of logs) {
       try {
         const ev = decodeEventLog({ abi: agentEscrowAbi, data: log.data, topics: log.topics });
+        if (!ev.args || !('id' in (ev.args as object))) continue; // policy/allowlist events are not job history
         out.push({ eventName: ev.eventName, args: ev.args, blockNumber: log.blockNumber!, txHash: log.transactionHash!, logIndex: log.logIndex! });
       } catch { /* unknown event: ignore */ }
     }
@@ -289,7 +291,7 @@ export class EscrowIndexer {
         case 'JobCreated': {
           const a = log.args;
           job = {
-            id, buyer: a.buyer, provider: a.provider, agent: /^0x0+$/.test(a.agent) ? null : a.agent,
+            id, buyer: a.buyer, provider: a.provider, agent: /^0x0+$/.test(a.agent) ? null : a.agent, arbiter: a.arbiter,
             amount: formatUsdcUnits(a.amount), amountUnits: String(a.amount), deadline: String(a.deadline),
             termsHash: a.termsHash, clientRef: a.clientRef, evidenceHash: null, status: 'Funded', settled: false,
             payout: null, fee: null, totalGasCostWei: '0', events: [],

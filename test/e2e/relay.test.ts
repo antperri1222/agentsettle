@@ -42,7 +42,7 @@ before(async () => {
   termsText = canonicalTerms(terms);
   termsHash = hashTerms(terms);
   assert.equal(await rc('owner').put(termsText), termsHash);
-  ({ jobId } = await owner.createJob({ provider: d.roles.providerAgent, amount: parseUsdcUnits('1'), deadline, termsHash, idempotencyKey: 'relay-test-0001' }));
+  ({ jobId } = await owner.createJob({ provider: d.roles.providerAgent, arbiter: d.roles.arbiter, amount: parseUsdcUnits('1'), deadline, termsHash, idempotencyKey: 'relay-test-0001' }));
 });
 
 after(() => { relay?.close(); anvil?.kill(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });

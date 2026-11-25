@@ -3,7 +3,7 @@
 ## Assets and trust assumptions
 - Assets: escrowed USDC, delegated agent budgets, signing rights, confidential task results, settlement proofs.
 - The buyer and provider are mutually distrustful.
-- The initial human arbiter is a centralized trust dependency and potential single point of failure.
+- Each job's arbiter is a trust dependency for that job. In v2 the arbiter is chosen per job (not one for the whole deployment), visible to the provider before work starts, and agents can only name arbiters their owner allowlisted. On the current testnet deployment the only listed arbiter is run by the buyer's own operator, so it is **not independent** for that buyer's jobs.
 - An LLM can be prompt-injected by arbitrary job content; it is not an authority for money transfers.
 - Evidence hashes guarantee integrity relative to a submitted commitment, not quality, provenance, or honesty.
 
@@ -23,17 +23,20 @@
 
 ## Status of controls (Phase 1, 2026-11-03)
 Implemented and tested (`npm run test:all`):
-- **On-chain access control**: only the provider delivers; only the buyer, or the buyer's delegated agent, approves or reclaims; only the arbiter resolves. Tested for strangers, swapped roles and fuzzed callers.
+- **On-chain access control**: only the provider delivers; only the buyer, or the buyer's delegated agent, approves or reclaims; only the job's own named arbiter resolves (v2). Tested for strangers, swapped roles and fuzzed callers.
 - **No double settlement**: terminal states are final. This is invariant-tested: each job settles at most once, the escrow balance equals the sum of open jobs, and total value is conserved.
 - **Reentrancy**: `nonReentrant` plus checks-effects-interactions. Tested with a hostile token that re-enters `approve`, `providerRefund` and `resolve`.
 - **Asset mismatch**: the escrow rejects fee-on-transfer tokens. The SDK refuses to connect unless the chain ID and the escrow's `usdc()` match the verified registry, and the deploy script checks decimals and symbol on-chain.
 - **Wallet-enforced spend policy**: owner → agent SpendPolicy with per-job cap, daily cap, provider allowlist, expiry and revocation, enforced in `createJobAsAgent`. Refunds do not restore daily budget. The SDK only approves exact token amounts.
 - **Idempotency / replay**: a per-buyer `clientRef` blocks a second funding of the same request, and the SDK returns the existing job on retry. Transaction replay is covered by account nonces and EIP-155 chain IDs.
-- **Party separation**: the arbiter cannot be buyer, provider or agent. The provider cannot be the buyer or agent.
+- **Party separation**: a job's arbiter cannot be its buyer, provider or buyer agent (checked at creation). The provider cannot be the buyer or agent.
+- **Arbiter choice (v2)**: a buyer agent can only name arbiters on its owner's on-chain arbiter allowlist, so a compromised agent cannot route disputes to a friendly arbiter. The provider sees the arbiter before working and can decline by refunding.
 - **Server holds no keys**: dashboard chain mode is read-only, and state comes from indexed events reconciled against storage.
 
 ## Known limitations (open)
-- **Single immutable arbiter**: it can pay or refund any disputed job, and there is no rotation or appeal. A compromised arbiter can misdirect disputed funds.
+- **Arbiter power**: a job's arbiter can pay or refund that job once it is disputed; there is no appeal. A compromised arbiter key can misdirect the disputed jobs that name it (only those). Owners can stop agents naming it with `disallow-arbiter`; existing jobs keep their arbiter.
+- **Unresponsive arbiter**: a disputed job stays frozen until its arbiter acts. There is no timeout yet.
+- **Dispute statements** are shared through the relay, signed by a party and readable only by the job's parties. They are not on-chain, the relay operator can read them, and their text is untrusted.
 - **Indefinite lock from Delivered**: if the buyer never approves and nobody disputes, funds stay locked. The provider can always dispute, so this depends on arbiter liveness.
 - **USDC blocklist**: if Circle blocklists the provider, `_pay` reverts and the job is stuck in Delivered/Disputed until the arbiter refunds. If the buyer is blocklisted, refunds revert. A pull-payment design would isolate this.
 - **Delegated agent can approve** jobs it created. Exposure is bounded by the policy caps, but a compromised agent could approve a colluding provider on the allowlist. Owners should keep allowlists tight and dispute from the owner key.

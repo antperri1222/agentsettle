@@ -5,7 +5,10 @@
 //   npm run owner -- policy <perJobUsdc> <dailyUsdc> <days>
 //   npm run owner -- allow <providerAddress>             add a provider to the agent's allowlist
 //   npm run owner -- disallow <providerAddress>
+//   npm run owner -- allow-arbiter <arbiterAddress>      let the agent name this arbiter on its jobs (v2 contracts)
+//   npm run owner -- disallow-arbiter <arbiterAddress>
 //   npm run owner -- revoke                              stop the agent from funding new jobs immediately
+//   npm run owner -- setup <usdc> <perJob> <daily> <days>   one unlock: allowance, policy, own provider agent, default arbiter
 //   npm run owner -- onboard <providerAddress> [eth]     allowlist a new provider and top up its gas (default 0.0001 ETH)
 import { readFileSync } from 'node:fs';
 import { createPublicClient, createWalletClient, formatEther, getAddress, http, isAddress, parseEther, type Address, type Chain, type PublicClient } from 'viem';
@@ -42,6 +45,11 @@ async function status() {
     const p = network.name === 'anvil' ? JSON.parse(readFileSync(LOCAL_FILE, 'utf8')).roles.providerAgent : process.env.PROVIDER_AGENT_ADDRESS!;
     const ok = await pub.readContract({ address: escrow, abi: agentEscrowAbi, functionName: 'providerAllowed', args: [owner, agent, getAddress(p)] });
     console.log(`provider agent ${p}: ${ok ? 'allowlisted' : 'NOT allowlisted'}`);
+  }
+  const arb = network.name === 'anvil' ? JSON.parse(readFileSync(LOCAL_FILE, 'utf8')).roles.arbiter : (process.env.AGENTSETTLE_DEFAULT_ARBITER || process.env.ARBITER_ADDRESS);
+  if (arb && isAddress(arb)) {
+    const ok = await pub.readContract({ address: escrow, abi: agentEscrowAbi, functionName: 'arbiterAllowed', args: [owner, agent, getAddress(arb)] });
+    console.log(`default arbiter ${getAddress(arb)}: ${ok ? 'allowlisted' : 'NOT allowlisted (run: npm run owner -- allow-arbiter ' + getAddress(arb) + ')'}`);
   }
 }
 
@@ -91,9 +99,25 @@ try {
     case 'allow': show(await (await signer()).setProviderAllowed(agent, addr(args[0]), true)); await status(); break;
     case 'disallow': show(await (await signer()).setProviderAllowed(agent, addr(args[0]), false)); await status(); break;
     case 'revoke': show(await (await signer()).revokePolicy(agent)); await status(); break;
+    case 'allow-arbiter': show(await (await signer()).setArbiterAllowed(agent, addr(args[0]), true)); await status(); break;
+    case 'disallow-arbiter': show(await (await signer()).setArbiterAllowed(agent, addr(args[0]), false)); await status(); break;
+    case 'setup': {
+      // Everything a fresh escrow deployment needs from the owner, signed after a single keystore unlock.
+      const [usdc, perJob, daily, days] = args;
+      if (!usdc || !perJob || !daily || !days || !/^\d+$/.test(days)) throw new Error('Usage: setup <usdcAllowance> <perJobUsdc> <dailyUsdc> <days>');
+      const c = await signer();
+      show(await c.approveSpend(parseUsdcUnits(usdc))); console.log(`✓ allowance ${usdc} USDC`);
+      const now = (await pub.getBlock()).timestamp;
+      show(await c.setPolicy(agent, parseUsdcUnits(perJob), parseUsdcUnits(daily), now + BigInt(days) * 86_400n)); console.log(`✓ policy $${perJob}/job, $${daily}/day, ${days} days`);
+      const p = process.env.PROVIDER_AGENT_ADDRESS;
+      if (p && isAddress(p)) { show(await c.setProviderAllowed(agent, getAddress(p), true)); console.log(`✓ allowlisted provider ${getAddress(p)}`); }
+      const a = process.env.AGENTSETTLE_DEFAULT_ARBITER || process.env.ARBITER_ADDRESS;
+      if (a && isAddress(a)) { show(await c.setArbiterAllowed(agent, getAddress(a), true)); console.log(`✓ allowlisted arbiter ${getAddress(a)}`); }
+      await status(); break;
+    }
     case 'onboard': await onboard(addr(args[0]), args[1] ?? '0.0001'); break;
     default:
-      console.log('Usage: npm run owner -- status | approve <usdc> | policy <perJob> <daily> <days> | allow <addr> | disallow <addr> | revoke | onboard <addr> [eth]');
+      console.log('Usage: npm run owner -- status | approve <usdc> | policy <perJob> <daily> <days> | allow <addr> | disallow <addr> | allow-arbiter <addr> | disallow-arbiter <addr> | revoke | setup <usdc> <perJob> <daily> <days> | onboard <addr> [eth]');
       process.exitCode = cmd ? 1 : 0;
   }
 } catch (e) {

@@ -39,7 +39,7 @@
     const head = node('div', 'row');
     const title = node('div');
     title.append(node('strong', null, `Job #${j.id} · ${j.amount} USDC`));
-    title.append(node('span', 'tiny muted', `buyer ${role(data, j.buyer)} → provider ${role(data, j.provider)}${j.agent ? ' · via agent ' + role(data, j.agent) : ''}`));
+    title.append(node('span', 'tiny muted', `buyer ${role(data, j.buyer)} → provider ${role(data, j.provider)}${j.agent ? ' · via agent ' + role(data, j.agent) : ''}${j.arbiter ? ' · arbiter ' + role(data, j.arbiter) : ''}`));
     head.append(title, node('span', 'pill ' + j.status.toLowerCase(), j.status.toUpperCase() + (j.settled ? ' ✓' : '')));
     box.append(head);
     if (j.status === 'Paid' && j.payout) box.append(node('p', 'tiny muted', `Provider received ${j.payout} · protocol fee ${j.fee}`));

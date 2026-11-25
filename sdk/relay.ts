@@ -8,6 +8,10 @@ import { getAddress, keccak256, recoverMessageAddress, toBytes, type Account, ty
 
 export type BlobKind = 'terms' | 'deliverable';
 export const MAX_BLOB_BYTES = 256 * 1024;
+/** Dispute statements: short signed notes from a job's parties, so an arbiter on another machine sees each side. */
+export const MAX_STATEMENT_BYTES = 8 * 1024;
+export const MAX_STATEMENTS_PER_JOB = 20;
+export interface Statement { by: Address; text: string; at: string }
 export const SIGNATURE_WINDOW_SECONDS = 300;
 
 export const uploadMessage = (chainId: number, escrow: Address, hash: Hex, ts: number) =>
@@ -15,6 +19,12 @@ export const uploadMessage = (chainId: number, escrow: Address, hash: Hex, ts: n
 
 export const readMessage = (chainId: number, escrow: Address, jobId: bigint, kind: BlobKind, ts: number) =>
   `AgentSettle relay read\nchain:${chainId}\nescrow:${escrow.toLowerCase()}\njob:${jobId}\nkind:${kind}\nts:${ts}`;
+
+export const statementMessage = (chainId: number, escrow: Address, jobId: bigint, textHash: Hex, ts: number) =>
+  `AgentSettle relay statement\nchain:${chainId}\nescrow:${escrow.toLowerCase()}\njob:${jobId}\ntext:${textHash.toLowerCase()}\nts:${ts}`;
+
+export const statementsReadMessage = (chainId: number, escrow: Address, jobId: bigint, ts: number) =>
+  `AgentSettle relay read\nchain:${chainId}\nescrow:${escrow.toLowerCase()}\njob:${jobId}\nkind:statements\nts:${ts}`;
 
 export async function recoverSigner(message: string, signature: Hex): Promise<Address> {
   return getAddress(await recoverMessageAddress({ message, signature }));
@@ -76,5 +86,31 @@ export class RelayClient {
       throw new RelayError(502, 'Relay returned content that does not match the on-chain hash; rejected');
     }
     return new TextDecoder().decode(bytes);
+  }
+
+  /** Posts a signed statement (e.g. a dispute reason) for a job. Only the job's parties are accepted by the relay. */
+  async putStatement(jobId: bigint, text: string): Promise<void> {
+    const bytes = toBytes(text);
+    if (bytes.length > MAX_STATEMENT_BYTES) throw new RelayError(413, `Statement exceeds ${MAX_STATEMENT_BYTES} bytes`);
+    const ts = Math.floor(Date.now() / 1000);
+    const signature = await this.sign(statementMessage(this.chainId, this.escrow, jobId, keccak256(bytes), ts));
+    const res = await fetch(`${this.url}/v1/jobs/${jobId}/statements`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain; charset=utf-8', 'x-agentsettle-timestamp': String(ts), 'x-agentsettle-signature': signature },
+      body: Buffer.from(bytes),
+    });
+    if (!res.ok) throw new RelayError(res.status, `Relay statement failed (${res.status}): ${await res.text()}`);
+  }
+
+  /** Reads a job's statements (parties only). Authorship is the relay-verified signer; treat the text as untrusted. */
+  async getStatements(jobId: bigint): Promise<Statement[]> {
+    const ts = Math.floor(Date.now() / 1000);
+    const signature = await this.sign(statementsReadMessage(this.chainId, this.escrow, jobId, ts));
+    const res = await fetch(`${this.url}/v1/jobs/${jobId}/statements`, {
+      headers: { 'x-agentsettle-timestamp': String(ts), 'x-agentsettle-signature': signature },
+    });
+    if (res.status === 404) return [];
+    if (!res.ok) throw new RelayError(res.status, `Relay read failed (${res.status}): ${await res.text()}`);
+    return (await res.json()).statements as Statement[];
   }
 }

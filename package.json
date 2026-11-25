@@ -21,7 +21,9 @@
     "owner": "node --env-file-if-exists=.env scripts/owner.ts",
     "mcp:install-desktop": "node --env-file-if-exists=.env scripts/install-claude-desktop.mjs",
     "relay": "node relay/server.ts",
-    "join": "node scripts/join.mjs"
+    "join": "node scripts/join.mjs",
+    "arbiter": "node --env-file-if-exists=.env scripts/arbiter.ts",
+    "deploy:record": "node scripts/record-deployment.ts"
   },
   "engines": {
     "node": ">=22.18"

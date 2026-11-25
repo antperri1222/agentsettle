@@ -60,7 +60,7 @@ test('a send rejected as "replacement transaction underpriced" is re-sent with h
   sent.length = 0;
   rejectFirst = 2; // two rejections → succeeds on the 3rd send (4x fees)
   const deadline = (await localPublicClient(rpcUrl).getBlock()).timestamp + 3600n;
-  const { jobId, receipt } = await owner.createJob({ provider: d.roles.providerAgent, amount: parseUsdcUnits('1'), deadline, termsHash: hashEvidence('t'), idempotencyKey: 'stuck-tx-0001' });
+  const { jobId, receipt } = await owner.createJob({ provider: d.roles.providerAgent, arbiter: d.roles.arbiter, amount: parseUsdcUnits('1'), deadline, termsHash: hashEvidence('t'), idempotencyKey: 'stuck-tx-0001' });
   assert.equal(receipt?.stage, 'confirmed');
   assert.equal(sent.length, 3);
   assert.deepEqual(sent.map((s) => s.rejected), [true, true, false]);

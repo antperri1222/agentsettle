@@ -37,7 +37,7 @@ before(async () => {
   for (let i = 0; i < 3; i++) {
     await mine(40); // spread the jobs across many blocks
     const dl = (await pub.getBlock()).timestamp + 3600n;
-    const { jobId } = await owner.createJob({ provider: d.roles.providerAgent, amount: parseUsdcUnits('1'), deadline: dl, termsHash: hashEvidence(`terms ${i}`), idempotencyKey: `limits-test-${i}-${Date.now()}` });
+    const { jobId } = await owner.createJob({ provider: d.roles.providerAgent, arbiter: d.roles.arbiter, amount: parseUsdcUnits('1'), deadline: dl, termsHash: hashEvidence(`terms ${i}`), idempotencyKey: `limits-test-${i}-${Date.now()}` });
     await mine(25);
     await provider.deliver(jobId, hashEvidence(`work ${i}`));
     if (i !== 1) await owner.approve(jobId);

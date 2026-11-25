@@ -22,7 +22,6 @@ contract DeployBaseSepoliaTest is Test {
     DeployBaseSepolia internal script;
     address internal deployer = makeAddr("deployer");
     address internal treasury = makeAddr("treasury");
-    address internal arbiter = makeAddr("arbiter");
     address internal usdc;
 
     function setUp() public {
@@ -42,32 +41,32 @@ contract DeployBaseSepoliaTest is Test {
         _etch("USDC", 6);
         vm.chainId(31337);
         vm.expectRevert(bytes("Not Base Sepolia (84532); refusing"));
-        script.preflight(deployer, treasury, arbiter);
+        script.preflight(deployer, treasury);
         vm.chainId(8453); // Base mainnet
         vm.expectRevert(bytes("Not Base Sepolia (84532); refusing"));
-        script.preflight(deployer, treasury, arbiter);
+        script.preflight(deployer, treasury);
     }
 
     function testRefusesMissingOrWrongToken() public {
         vm.chainId(84532);
         vm.expectRevert(bytes("No contract at verified USDC address"));
-        script.preflight(deployer, treasury, arbiter);
+        script.preflight(deployer, treasury);
         _etch("USDC", 18);
         vm.expectRevert(bytes("USDC decimals != 6"));
-        script.preflight(deployer, treasury, arbiter);
+        script.preflight(deployer, treasury);
         _etch("mUSDC", 6);
         vm.expectRevert(bytes("Token symbol != USDC"));
-        script.preflight(deployer, treasury, arbiter);
+        script.preflight(deployer, treasury);
     }
 
     function testRefusesBadRoles() public {
         vm.chainId(84532);
         _etch("USDC", 6);
-        vm.expectRevert(bytes("Treasury and arbiter must differ"));
-        script.preflight(deployer, treasury, treasury);
-        vm.expectRevert(bytes("Arbiter must not be the deployer key"));
-        script.preflight(deployer, treasury, deployer);
-        script.preflight(deployer, treasury, arbiter); // passes
+        vm.expectRevert(bytes("Zero treasury address"));
+        script.preflight(deployer, address(0));
+        vm.expectRevert(bytes("Treasury must not be the deployer key"));
+        script.preflight(deployer, deployer);
+        script.preflight(deployer, treasury); // passes
     }
 
     function testRunRequiresExplicitConfirmation() public {
@@ -75,7 +74,6 @@ contract DeployBaseSepoliaTest is Test {
         _etch("USDC", 6);
         vm.setEnv("CONFIRM_TESTNET_DEPLOY", "yes");
         vm.setEnv("TREASURY_ADDRESS", vm.toString(treasury));
-        vm.setEnv("ARBITER_ADDRESS", vm.toString(arbiter));
         vm.expectRevert(bytes("Set CONFIRM_TESTNET_DEPLOY=base-sepolia"));
         script.run();
     }
